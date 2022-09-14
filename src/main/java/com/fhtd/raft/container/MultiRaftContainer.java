@@ -3,17 +3,22 @@ package com.fhtd.raft.container;
 
 import com.fhtd.raft.Raft;
 import com.fhtd.raft.Ticker;
+import com.fhtd.raft.config.Conf;
 import com.fhtd.raft.node.Node;
 import com.fhtd.raft.transport.*;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -21,6 +26,11 @@ import java.util.function.Consumer;
  * @version MultiRaft, 2019/9/4 11:49 下午 liuqi19
  **/
 public class MultiRaftContainer implements RaftContainer {
+    private final static Logger logger = LoggerFactory.getLogger(MultiRaftContainer.class);
+
+    private final Conf<Integer> CONFIG_TICKER_PERIOD=Conf.create("ticker.period",100);
+    private final Conf<String> CONFIG_DATA_PATH= Conf.create("data.path","./data");
+
 
     private int id;
 
@@ -35,14 +45,24 @@ public class MultiRaftContainer implements RaftContainer {
     private boolean running;
 
 
-    public MultiRaftContainer(int id, Properties props, Raft... rafts) {
-        if (!unique(rafts)) throw new RuntimeException("raft必须唯一");
+    public MultiRaftContainer(int id, Properties props) {
+        initConf(props);
+//        if (!unique(rafts)) throw new RuntimeException("raft必须唯一");
         this.id = id;
+        this.ticker = new Ticker(CONFIG_TICKER_PERIOD.value());
 
-        this.rafts = rafts;
-        this.ticker = new Ticker(100);
+        this.dataPath = Paths.get(CONFIG_DATA_PATH.value());
+    }
 
-        this.dataPath = Paths.get(props.getProperty("data.path"));
+    private void initConf(Properties properties){
+        logger.info("start init config from args");
+        if(properties==null||properties.isEmpty()) return;
+
+        CONFIG_TICKER_PERIOD.init(properties);
+        CONFIG_DATA_PATH.init(properties);
+
+
+
     }
 
 
@@ -61,10 +81,6 @@ public class MultiRaftContainer implements RaftContainer {
 
 
         this.communicator = new Communicator(me, Arrays.asList(remotes));
-
-        for (Raft raft : rafts) {
-            raft.exec();
-        }
 
         Server server = new Server();
 

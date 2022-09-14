@@ -22,7 +22,9 @@ public class ClientConnection extends Connection {
 
     private final static EventLoopGroup loop = new NioEventLoopGroup();
 
-    private InetSocketAddress address;
+    private final InetSocketAddress address;
+
+    private boolean closed = false;
 
     public ClientConnection(String ip, int port) {
         this.address = new InetSocketAddress(ip, port);
@@ -39,16 +41,19 @@ public class ClientConnection extends Connection {
                 .handler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     public void initChannel(SocketChannel ch) {
+                        if (ClientConnection.this.closed) return;
                         ClientConnection.this.setChannel(ch);
                         //增加重连机制
                         ch.pipeline().addFirst(new ChannelInboundHandlerAdapter() {
                             @Override
                             public void channelInactive(ChannelHandlerContext ctx) throws Exception {
                                 super.channelInactive(ctx);
-                                ctx.channel().eventLoop().schedule(() -> connect(channelHandlers), 1, TimeUnit.SECONDS);
+
+                                if (!ClientConnection.this.closed) {
+                                    ctx.channel().eventLoop().schedule(() -> connect(channelHandlers), 1, TimeUnit.SECONDS);
+                                }
                             }
                         });
-
 
 
                         ch.pipeline().addLast(channelHandlers);
@@ -65,5 +70,10 @@ public class ClientConnection extends Connection {
             } else this.setChannel(f.channel());
         });
         return future;
+    }
+
+
+    public void close() {
+        this.closed = true;
     }
 }

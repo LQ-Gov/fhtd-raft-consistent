@@ -20,10 +20,10 @@ public class App {
         nodes[2] = new Node(3, "127.0.0.1", 9932);
 
 
-        int index = Integer.parseInt(args[0]) - 1;
+        int index = args.length>0? Integer.parseInt(args[0]) - 1:0;
 
 
-        Node local = nodes[index];
+        Node me = nodes[index];
 
         Node[] members = new Node[nodes.length - 1];
 
@@ -46,9 +46,9 @@ public class App {
 //        Raft raft = new Raft(Paths.get("data"), new DefaultActuator());
 
 //        Raft raft = new UnstableRaft(new DefaultActuator());
-        RaftContainer container = new MultiRaftContainer(local.id(),null);
+        RaftContainer container = new MultiRaftContainer(me.id(),null);
 
-        container.connect(local, members);
+        container.connect(me, members);
 
     }
 }

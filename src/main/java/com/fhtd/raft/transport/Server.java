@@ -28,7 +28,7 @@ public class Server {
         ChannelFuture local = server.bind(port);
         this.channel = local.channel();
 
-        logger.info("init local listen:{}", port);
+        logger.info("server init,listen port:{}",port);
 
 
     }

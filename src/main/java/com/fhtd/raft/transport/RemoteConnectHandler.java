@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 
 /**
  * @author liuqi19
@@ -36,7 +37,7 @@ public class RemoteConnectHandler extends ChannelInboundHandlerAdapter {
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
 
 
-        logger.info("连接建立成功,remote:{}", remote.id());
+        logger.info("connected remote server:{},host:{},port:{}", remote.id(),remote.hostname(),remote.port());
 
         ByteBuf buffer = ctx.alloc().buffer(4).writeInt(local.id());
 
