@@ -33,7 +33,7 @@ public class ClientConnection extends Connection {
     }
 
     public ChannelFuture connect(ChannelHandler... channelHandlers) {
-        logger.info("try to connect remote server:{}:{}", address.getHostName(), address.getPort());
+//        logger.info("try to connect remote server:{}:{}", address.getHostName(), address.getPort());
         Bootstrap bootstrap = new Bootstrap()
                 .group(loop)
                 .channel(NioSocketChannel.class)

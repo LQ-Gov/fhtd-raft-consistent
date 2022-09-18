@@ -20,15 +20,32 @@ public class Ticker {
 
     private List<Tick> ticks = new LinkedList<>();
 
+    private boolean running;
+
 
     public Ticker(long period) {
         this.period = period;
     }
 
 
-    public Ticker run() {
-        timer.schedule(new Task(), 0, period);
+    public synchronized Ticker start() {
+        if(!isRunning()) {
+            timer.schedule(new Task(), 0, period);
+            this.running = true;
+        }
         return this;
+    }
+
+    public synchronized void stop(){
+        if(isRunning()) {
+            timer.cancel();
+            this.running = false;
+        }
+    }
+
+    public boolean isRunning(){
+        return running;
+
     }
 
 

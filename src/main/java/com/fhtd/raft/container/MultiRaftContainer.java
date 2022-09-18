@@ -4,6 +4,8 @@ package com.fhtd.raft.container;
 import com.fhtd.raft.Raft;
 import com.fhtd.raft.Ticker;
 import com.fhtd.raft.config.Conf;
+import com.fhtd.raft.exception.RaftClassNotFoundException;
+import com.fhtd.raft.impl.Example;
 import com.fhtd.raft.node.Node;
 import com.fhtd.raft.transport.*;
 import io.netty.channel.Channel;
@@ -13,12 +15,14 @@ import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.ref.PhantomReference;
+import java.lang.reflect.Constructor;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -27,6 +31,8 @@ import java.util.function.Consumer;
  **/
 public class MultiRaftContainer implements RaftContainer {
     private final static Logger logger = LoggerFactory.getLogger(MultiRaftContainer.class);
+
+    private final static Map<Class,Class<? extends Raft>> CLASS_BINDER = new HashMap<>();
 
     private final Conf<Integer> CONFIG_TICKER_PERIOD=Conf.create("ticker.period",100);
     private final Conf<String> CONFIG_DATA_PATH= Conf.create("data.path","./data");
@@ -43,6 +49,14 @@ public class MultiRaftContainer implements RaftContainer {
     private final Path dataPath;
 
     private boolean running;
+
+
+    private Map<String,Raft> raftInstances = new HashMap<>();
+
+
+
+
+
 
 
     public MultiRaftContainer(int id, Properties props) {
@@ -78,6 +92,7 @@ public class MultiRaftContainer implements RaftContainer {
     }
 
     public void connect(Node me, Node... remotes) throws Exception {
+        if(running) return;
 
 
         this.communicator = new Communicator(me, Arrays.asList(remotes));
@@ -106,21 +121,36 @@ public class MultiRaftContainer implements RaftContainer {
             communicator.bind(remote, conn);
         }
 
-        ticker.run();
+        ticker.start();
+
+        for(Raft inc:raftInstances.values())
+            inc.exec();
 
         this.running = true;
 
 
     }
 
-    public <T> T create(String name, Class<T> cls) throws Exception {
-        Raft raft = new Raft(name, dataPath, this.communicator, this.ticker);
+    public <T extends Raft > T create(String name, Class<T> cls) throws Exception {
+        if(raftInstances.containsKey(name)){
+            return  (T)raftInstances.get(name);
+        }
 
-        if (this.running)
-            raft.exec();
+        Class<? extends Raft> instanceClass = CLASS_BINDER.get(cls);
+        if(instanceClass==null)
+            throw new RaftClassNotFoundException(cls);
+        Constructor<T> constructor = (Constructor<T>) instanceClass.getDeclaredConstructor(String.class,Path.class,Communicator.class,Ticker.class);
+
+        Raft raft =constructor.newInstance(name,dataPath,this.communicator,this.ticker);
+
+        raftInstances.put(name,raft);
+
+        if(running) raft.exec();
 
 
-        return cls.getDeclaredConstructor().newInstance();
+
+
+        return (T)raft;
 
     }
 
@@ -139,5 +169,10 @@ public class MultiRaftContainer implements RaftContainer {
         ch.pipeline().addLast(new RemoteConnectHandler(this.communicator.local(), remote));
         ch.pipeline().addLast(new MarkCommandInBoundHandler(remote, this.communicator::receive));
         ch.pipeline().addLast(new CommandOutBoundHandler());
+    }
+
+    static {
+
+        CLASS_BINDER.put(Example.class,Example.class);
     }
 }

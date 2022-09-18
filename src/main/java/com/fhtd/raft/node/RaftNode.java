@@ -52,16 +52,16 @@ public class RaftNode extends Node {
     /**
      * 减少
      *
-     * @param rejected
-     * @param lastIndex
+     * @param rejected 被follower拒绝的index
+     * @param confirmIndex follower已经确认append的index
      * @return
      */
-    public boolean decrease(long rejected, long lastIndex) {
+    public boolean decrease(long rejected, long confirmIndex) {
         if (rejected < this.match) return false;
 
         if (this.next - 1 != rejected) return false;
 
-        this.next = Math.min(rejected, lastIndex + 1);
+        this.next = Math.min(rejected, confirmIndex + 1);
 
         if (this.next == rejected) this.next = this.match + 1;
 

@@ -150,7 +150,7 @@ public class Log implements Serializer, Runnable {
         long conflictIndex = findConflict(collection.entries());
 
         if (conflictIndex == -1) return collection.lastIndex();
-
+        //todo 冲突的index是已经committed的日志，这种情况理论不可能发生，如果发生，说明程序有bug，后续抛出异常直接把该节点清理掉
         if (conflictIndex <= this.committed) {
             logger.error("entry {} conflict with committed entry [committed({})]", conflictIndex, this.committed);
             return -1;
@@ -193,6 +193,24 @@ public class Log implements Serializer, Runnable {
 
         return -1;
     }
+
+
+    public long findLessThanTerm(long index,long term){
+        if(index>lastIndex()){
+            logger.error("index({}) is out of range [0, lastIndex({})] in findLessThanTerm",index,lastIndex());
+            return -1;
+        }
+
+        while (term(index)>term) {
+            index--;
+        }
+        return index;
+
+
+
+    }
+
+
 
 
     public void commitTo(long index) {

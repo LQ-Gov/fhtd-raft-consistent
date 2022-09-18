@@ -1,4 +1,4 @@
-package com.fhtd.raft;
+package com.fhtd.raft.message;
 
 /**
  * @author liuqi19

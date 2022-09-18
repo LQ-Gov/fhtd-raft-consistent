@@ -1,6 +1,8 @@
 package com.fhtd.raft.node;
 
 
+import com.fhtd.raft.RaftContext;
+import com.fhtd.raft.message.Message;
 import com.fhtd.raft.role.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,19 +31,25 @@ public class LocalNode extends RaftNode {
         this.active(true);
 
     }
+
     @Override
     public int id() {
         return super.id();
     }
 
-    public RoleType role() {
-        return role == null ? null : this.role.name();
-    }
-
-
-    public Role role2(){
+    public Role role() {
         return role;
     }
+
+
+    public void handle(RaftContext context, Message<?> message) {
+        this.role.handle(context, message);
+    }
+
+    public boolean is(RoleType type) {
+        return type == this.role.name();
+    }
+
 
 
     public void becomeFollower() {
@@ -51,12 +59,14 @@ public class LocalNode extends RaftNode {
     public void becomeCandidate() {
         role = ROLE_CACHE[1];
     }
+
     /**
      * 成为PRE-备选人
      */
     public void becomePreCandidate() {
         role = ROLE_CACHE[2];
     }
+
     /**
      * 成为Leader
      */

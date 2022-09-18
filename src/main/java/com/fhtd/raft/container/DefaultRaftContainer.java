@@ -1,5 +1,6 @@
 package com.fhtd.raft.container;
 
+import com.fhtd.raft.Raft;
 import com.fhtd.raft.node.Node;
 
 /**
@@ -13,9 +14,10 @@ public class DefaultRaftContainer implements RaftContainer {
     }
 
     @Override
-    public <T> T create(String name, Class<T> cls) throws Exception {
+    public <T extends Raft> T create(String name, Class<T> cls) throws Exception {
         return null;
     }
+
 
     @Override
     public void join(Node node) {

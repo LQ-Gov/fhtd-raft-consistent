@@ -1,8 +1,8 @@
 package com.fhtd.raft.role;
 
 
-import com.fhtd.raft.Message;
 import com.fhtd.raft.RaftContext;
+import com.fhtd.raft.message.Message;
 
 import java.util.function.BiConsumer;
 
@@ -13,7 +13,7 @@ import java.util.function.BiConsumer;
 public class Leader extends AbstractRole {
 
 
-    public Leader(Runnable tick, BiConsumer<RaftContext, Message> messageHandler) {
+    public Leader(Runnable tick, BiConsumer<RaftContext, Message<?>> messageHandler) {
         super(tick, messageHandler);
     }
 

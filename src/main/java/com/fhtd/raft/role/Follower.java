@@ -2,8 +2,8 @@ package com.fhtd.raft.role;
 
 
 
-import com.fhtd.raft.Message;
 import com.fhtd.raft.RaftContext;
+import com.fhtd.raft.message.Message;
 
 import java.util.function.BiConsumer;
 
@@ -15,7 +15,7 @@ public class Follower extends AbstractRole {
 
 
 
-    public Follower(Runnable tick, BiConsumer<RaftContext, Message> messageHandler) {
+    public Follower(Runnable tick, BiConsumer<RaftContext, Message<?>> messageHandler) {
         super(tick, messageHandler);
     }
 

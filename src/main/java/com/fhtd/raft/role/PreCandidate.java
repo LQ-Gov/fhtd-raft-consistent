@@ -2,8 +2,8 @@ package com.fhtd.raft.role;
 
 
 
-import com.fhtd.raft.Message;
 import com.fhtd.raft.RaftContext;
+import com.fhtd.raft.message.Message;
 
 import java.util.function.BiConsumer;
 
@@ -14,7 +14,7 @@ import java.util.function.BiConsumer;
 public class PreCandidate extends AbstractRole {
 
 
-    public PreCandidate(Runnable tick, BiConsumer<RaftContext, Message> messageHandler) {
+    public PreCandidate(Runnable tick, BiConsumer<RaftContext, Message<?>> messageHandler) {
         super(tick, messageHandler);
     }
 

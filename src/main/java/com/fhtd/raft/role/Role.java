@@ -1,8 +1,8 @@
 package com.fhtd.raft.role;
 
 
-import com.fhtd.raft.Message;
 import com.fhtd.raft.RaftContext;
+import com.fhtd.raft.message.Message;
 
 /**
  * @author liuqi19
@@ -13,5 +13,5 @@ public interface Role {
 
     void tick();
 
-    void handle(RaftContext context, Message message);
+    void handle(RaftContext context, Message<?> message);
 }

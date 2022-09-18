@@ -12,7 +12,7 @@ public interface RaftContainer {
 
     void connect(Node me, Node[] members) throws Exception;
 
-    <T> T create(String name, Class<T> cls) throws Exception;
+    <T extends Raft> T create(String name, Class<T> cls) throws Exception;
 
 
     void join(Node node);

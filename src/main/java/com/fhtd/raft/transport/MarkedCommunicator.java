@@ -1,8 +1,8 @@
 package com.fhtd.raft.transport;
 
 
-import com.fhtd.raft.Message;
 import com.fhtd.raft.container.MarkMessage;
+import com.fhtd.raft.message.Message;
 import com.fhtd.raft.node.Node;
 
 import java.util.Collection;
@@ -23,7 +23,7 @@ public class MarkedCommunicator extends Communicator {
     @Override
     public void sendTo(Node node, Object message) {
 
-        MarkMessage ms = new MarkMessage(mark, (Message) message);
+        MarkMessage ms = new MarkMessage(mark, (Message<?>) message);
 
         communicator.sendTo(node, ms);
     }

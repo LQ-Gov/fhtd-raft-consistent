@@ -62,6 +62,8 @@ public class Communicator {
     public void receive(Node from, MarkMessage message) {
         List<CommandReceiveListener> listeners = commandReceiveListeners.get(message.mark());
 
+        if(listeners==null) return;
+
         for (CommandReceiveListener listener : listeners)
             listener.receive(from, message.data());
     }

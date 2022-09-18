@@ -1,7 +1,7 @@
 package com.fhtd.raft.container;
 
 
-import com.fhtd.raft.Message;
+import com.fhtd.raft.message.Message;
 
 /**
  * @author liuqi19
@@ -10,12 +10,12 @@ import com.fhtd.raft.Message;
 public class MarkMessage {
 
     private String mark;
-    private Message data;
+    private Message<?> data;
 
     public MarkMessage(){}
 
 
-    public MarkMessage(String mark, Message message){
+    public MarkMessage(String mark, Message<?> message){
         this.mark = mark;
         this.data = message;
     }
@@ -24,5 +24,5 @@ public class MarkMessage {
     public String mark(){return mark;}
 
 
-    public Message data(){return data;}
+    public Message<?> data(){return data;}
 }

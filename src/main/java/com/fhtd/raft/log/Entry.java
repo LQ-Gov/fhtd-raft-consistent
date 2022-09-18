@@ -43,8 +43,14 @@ public class Entry {
         private Entry[] entries = null;
 
 
+        /**
+         * 表示该entry集合对应的上一条日志的term*
+         */
         private long term;
 
+        /**
+         * index表示该 entry集合对应的上一条日志的集合*
+         */
         private long index;
 
         private long committed;

@@ -3,6 +3,7 @@ package com.fhtd.raft;
 
 import com.fhtd.raft.container.MultiRaftContainer;
 import com.fhtd.raft.container.RaftContainer;
+import com.fhtd.raft.impl.Example;
 import com.fhtd.raft.node.Node;
 
 /**
@@ -49,6 +50,8 @@ public class App {
         RaftContainer container = new MultiRaftContainer(me.id(),null);
 
         container.connect(me, members);
+
+        Example example = container.create("example", Example.class);
 
     }
 }

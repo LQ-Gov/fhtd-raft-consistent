@@ -1,7 +1,7 @@
 package com.fhtd.raft.role;
 
-import com.fhtd.raft.Message;
 import com.fhtd.raft.RaftContext;
+import com.fhtd.raft.message.Message;
 
 /**
  * @author liuqi19
@@ -19,7 +19,7 @@ public class Assister implements Role {
     }
 
     @Override
-    public void handle(RaftContext context, Message message) {
+    public void handle(RaftContext context, Message<?> message) {
 
     }
 

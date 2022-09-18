@@ -2,8 +2,8 @@ package com.fhtd.raft.role;
 
 
 
-import com.fhtd.raft.Message;
 import com.fhtd.raft.RaftContext;
+import com.fhtd.raft.message.Message;
 
 import java.util.function.BiConsumer;
 
@@ -15,10 +15,10 @@ public abstract class AbstractRole implements Role {
 
     private Runnable tick;
 
-    private BiConsumer<RaftContext, Message> mh;
+    private BiConsumer<RaftContext, Message<?>> mh;
 
 
-    public AbstractRole(Runnable tick, BiConsumer<RaftContext, Message> messageHandler) {
+    public AbstractRole(Runnable tick, BiConsumer<RaftContext, Message<?>> messageHandler) {
         this.tick = tick;
         this.mh = messageHandler;
     }
@@ -30,7 +30,7 @@ public abstract class AbstractRole implements Role {
     }
 
     @Override
-    public void handle(RaftContext context, Message message) {
+    public void handle(RaftContext context, Message<?> message) {
         this.mh.accept(context,message);
     }
 }
