@@ -1,7 +1,7 @@
 package com.fhtd.raft.transport;
 
 
-import com.fhtd.raft.container.MarkMessage;
+import com.fhtd.raft.message.MarkMessage;
 import com.fhtd.raft.message.Message;
 import com.fhtd.raft.node.Node;
 

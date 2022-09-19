@@ -32,10 +32,10 @@ import java.util.function.Consumer;
 public class MultiRaftContainer implements RaftContainer {
     private final static Logger logger = LoggerFactory.getLogger(MultiRaftContainer.class);
 
-    private final static Map<Class,Class<? extends Raft>> CLASS_BINDER = new HashMap<>();
+    private final static Map<Class, Class<? extends Raft>> CLASS_BINDER = new HashMap<>();
 
-    private final Conf<Integer> CONFIG_TICKER_PERIOD=Conf.create("ticker.period",100);
-    private final Conf<String> CONFIG_DATA_PATH= Conf.create("data.path","./data");
+    private final Conf<Integer> CONFIG_TICKER_PERIOD = Conf.create("ticker.period", 100);
+    private final Conf<String> CONFIG_DATA_PATH = Conf.create("data.path", "./data");
 
 
     private int id;
@@ -51,12 +51,7 @@ public class MultiRaftContainer implements RaftContainer {
     private boolean running;
 
 
-    private Map<String,Raft> raftInstances = new HashMap<>();
-
-
-
-
-
+    private Map<String, Raft> raftInstances = new HashMap<>();
 
 
     public MultiRaftContainer(int id, Properties props) {
@@ -68,13 +63,12 @@ public class MultiRaftContainer implements RaftContainer {
         this.dataPath = Paths.get(CONFIG_DATA_PATH.value());
     }
 
-    private void initConf(Properties properties){
+    private void initConf(Properties properties) {
         logger.info("start init config from args");
-        if(properties==null||properties.isEmpty()) return;
+        if (properties == null || properties.isEmpty()) return;
 
         CONFIG_TICKER_PERIOD.init(properties);
         CONFIG_DATA_PATH.init(properties);
-
 
 
     }
@@ -92,7 +86,7 @@ public class MultiRaftContainer implements RaftContainer {
     }
 
     public void connect(Node me, Node... remotes) throws Exception {
-        if(running) return;
+        if (running) return;
 
 
         this.communicator = new Communicator(me, Arrays.asList(remotes));
@@ -123,7 +117,7 @@ public class MultiRaftContainer implements RaftContainer {
 
         ticker.start();
 
-        for(Raft inc:raftInstances.values())
+        for (Raft inc : raftInstances.values())
             inc.exec();
 
         this.running = true;
@@ -131,32 +125,40 @@ public class MultiRaftContainer implements RaftContainer {
 
     }
 
-    public <T extends Raft > T create(String name, Class<T> cls) throws Exception {
-        if(raftInstances.containsKey(name)){
-            return  (T)raftInstances.get(name);
+    public <T extends Raft> T create(String name, Class<T> cls) throws Exception {
+        if (raftInstances.containsKey(name)) {
+            return (T) raftInstances.get(name);
         }
 
         Class<? extends Raft> instanceClass = CLASS_BINDER.get(cls);
-        if(instanceClass==null)
+        if (instanceClass == null)
             throw new RaftClassNotFoundException(cls);
-        Constructor<T> constructor = (Constructor<T>) instanceClass.getDeclaredConstructor(String.class,Path.class,Communicator.class,Ticker.class);
+        Constructor<T> constructor = (Constructor<T>) instanceClass.getDeclaredConstructor(String.class, Path.class, Communicator.class, Ticker.class);
 
-        Raft raft =constructor.newInstance(name,dataPath,this.communicator,this.ticker);
+        Raft raft = constructor.newInstance(name, dataPath, this.communicator, this.ticker);
 
-        raftInstances.put(name,raft);
+        raftInstances.put(name, raft);
 
-        if(running) raft.exec();
-
-
+        if (running) raft.exec();
 
 
-        return (T)raft;
+        return (T) raft;
 
     }
 
     @Override
     public void join(Node node) {
+        communicator.join(node);
+        ClientConnection conn = new ClientConnection(node.hostname(), node.port());
 
+        conn.connect(new ChannelInitializer<SocketChannel>() {
+            @Override
+            protected void initChannel(SocketChannel ch) throws Exception {
+                connectionInitializer(node, conn);
+            }
+        });
+
+        communicator.bind(node, conn);
     }
 
 
@@ -173,6 +175,6 @@ public class MultiRaftContainer implements RaftContainer {
 
     static {
 
-        CLASS_BINDER.put(Example.class,Example.class);
+        CLASS_BINDER.put(Example.class, Example.class);
     }
 }

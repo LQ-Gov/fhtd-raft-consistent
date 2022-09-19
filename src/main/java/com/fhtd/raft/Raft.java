@@ -91,12 +91,16 @@ public class Raft {
                 new Leader(this::broadcastHeartbeat, this::leaderCommandHandler)
         );
 
+        //todo 这里后面要改成把事件绑定在communicator上，以便于新节点的加入通知
         this.remotes = communicator.remotes().stream().map(node -> {
+
             node.bindEventListener(Node.Event.ACTIVE, Async.create(this::nodeEventListener)::accept);
             node.bindEventListener(Node.Event.INACTIVE, Async.create(this::nodeEventListener)::accept);
 
             return new RaftNode(node);
         }).collect(Collectors.toMap(Node::id, x -> x));
+
+
 
         ticker.connect(this.tick);
     }
@@ -133,15 +137,16 @@ public class Raft {
 
         Vote vote = new Vote(me.id(), this.log.lastTerm(), this.log.lastIndex(), preCandidate);
 
-        Message<Vote> message2 = Message.create(MessageType.VOTE, term, vote);
+        Message<Vote> message = Message.create(MessageType.VOTE, term, vote);
 
-        broadcast(message2, true);
+        broadcast(message, true);
 
     }
 
     private void nodeEventListener(Node node, Node.Event event) {
-        logger.info("node:{},trigger event:{}", node.id(), event);
+        logger.debug("node:{},trigger event:{}", node.id(), event);
         node = node.id() == me.id() ? me : remotes.get(node.id());
+        if(node==null) return;
         if (event == Node.Event.ACTIVE) node.active(true);
         else if (event == Node.Event.INACTIVE) node.active(false);
     }
@@ -156,6 +161,8 @@ public class Raft {
         RaftNode from = node.id() == me.id() ? me : remotes.get(node.id());
 
         RaftContext raftContext = new RaftContext(from, MESSAGE_FUTURE_MAP.remove(message));
+
+        logger.debug("receive message from {},message type is {}",from.id(),message.type());
 
         //如果消息小于当前term
         if (message.term() < this.term()) {
@@ -417,6 +424,8 @@ public class Raft {
 
             case HEARTBEAT:
 
+                logger.debug("handle heartbeat message,from:{}",context.from().id());
+
                 Heartbeat heartbeat = (Heartbeat) message.data();
                 this.log.commitTo(heartbeat.committedIndex());
                 this.send(context.from(), Message.create(MessageType.HEARTBEAT_RESP, this.term, null));
@@ -517,24 +526,24 @@ public class Raft {
         }
     }
 
-    private void recover(Snapshot snapshot, Stashed stashed) throws Exception {
-        this.log.recover(snapshot == null ? Snapshot.Metadata.EMPTY : snapshot.metadata(), stashed.entries());
-
-        me.update(this.log.lastIndex());
-        //还原hard state
-        HardState state = stashed.state();
-        if (state != null && state != HardState.EMPTY) {
-
-
-            if (state.committed() < this.log.committedIndex() || state.committed() > this.log.lastIndex()) {
-                logger.error("{} state.commit {} is out of range [{}, {}]", me.id(), state.committed(), this.log.committedIndex(), this.log.lastIndex());
-            } else {
-                this.log.commitTo(state.committed());
-                this.term = state.term();
-                this.voted = this.remotes.get(state.vote());
-            }
-        }
-    }
+//    private void recover(Snapshot snapshot, Stashed stashed) throws Exception {
+//        this.log.recover(snapshot == null ? Snapshot.Metadata.EMPTY : snapshot.metadata(), stashed.entries());
+//
+//        me.update(this.log.lastIndex());
+//        //还原hard state
+//        HardState state = stashed.state();
+//        if (state != null && state != HardState.EMPTY) {
+//
+//
+//            if (state.committed() < this.log.committedIndex() || state.committed() > this.log.lastIndex()) {
+//                logger.error("{} state.commit {} is out of range [{}, {}]", me.id(), state.committed(), this.log.committedIndex(), this.log.lastIndex());
+//            } else {
+//                this.log.commitTo(state.committed());
+//                this.term = state.term();
+//                this.voted = this.remotes.get(state.vote());
+//            }
+//        }
+//    }
 
     public synchronized void exec() throws Exception {
 
@@ -545,7 +554,7 @@ public class Raft {
 
         Stashed stashed = wal.readAll();
 //
-//        this.log = new Log(this, snapshotter, wal, actuator);
+        this.log = new Log(snapshotter, wal,this::hardState,this::recover,this::apply);
 //
 //        actuator.recover(snapshot == null ? null : snapshot.data());
 //
@@ -662,13 +671,15 @@ public class Raft {
 
     private synchronized void broadcastHeartbeat() {
 
-        if (me.is(RoleType.LEADER)) return;
+
+
+        if (!me.is(RoleType.LEADER)) return;
 
         if (!checkQuorumActive())
             this.becomeFollower(this.term, null);
 
         else {
-
+            logger.debug("broadcast heartbeat,current term:{},commitIndex:{}",this.term(),this.log.committedIndex());
             Raft self = this;
             broadcast(node -> {
                 long committed = Math.min(self.log.committedIndex(), node.match());
@@ -680,7 +691,8 @@ public class Raft {
 
     private synchronized void broadcastElection() {
 
-        if (me.is(RoleType.LEADER) && checkQuorumActive()) {
+        if (!me.is(RoleType.LEADER) && checkQuorumActive()) {
+            logger.info("start leader election,id:{},current term:{}",me.id(),this.term());
             this.campaign(true);
         }
     }

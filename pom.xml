@@ -62,7 +62,7 @@
         <dependency>
             <groupId>io.protostuff</groupId>
             <artifactId>protostuff-runtime</artifactId>
-            <version>1.6.0</version>
+            <version>1.8.0</version>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/io.protostuff/protostuff-core -->
@@ -93,6 +93,14 @@
             <version>5.9.0</version>
             <scope>test</scope>
         </dependency>
+
+        <!-- https://mvnrepository.com/artifact/com.google.guava/guava -->
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>31.1-jre</version>
+        </dependency>
+
 
 
 

@@ -3,7 +3,7 @@ package com.fhtd.raft.transport;
 
 
 
-import com.fhtd.raft.container.MarkMessage;
+import com.fhtd.raft.message.MarkMessage;
 import com.fhtd.raft.node.Node;
 
 import java.util.*;
@@ -22,13 +22,12 @@ public class Communicator {
 
     private final Map<Integer, Connection> connections = new ConcurrentHashMap<>();
 
-    private Map<String, List<CommandReceiveListener>> commandReceiveListeners = new HashMap<>();
+    private final Map<String, List<CommandReceiveListener>> commandReceiveListeners = new HashMap<>();
 
 
     public Communicator(Node me, Collection<Node> remotes) {
         this.me = me;
 
-//        this.remotes = remotes.stream().map(x -> new EventNode(x, this::event)).collect(Collectors.toMap(Node::id, x -> x));
         this.remotes = remotes.stream().collect(Collectors.toMap(Node::id, x -> x));
     }
 
@@ -52,6 +51,11 @@ public class Communicator {
 
     public Collection<Node> remotes() {
         return remotes.values();
+    }
+
+    public void join(Node node){
+        this.remotes.put(node.id(),node);
+
     }
 
 

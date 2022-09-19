@@ -1,4 +1,4 @@
-package com.fhtd.raft.container;
+package com.fhtd.raft.message;
 
 
 import com.fhtd.raft.message.Message;

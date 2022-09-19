@@ -1,6 +1,6 @@
 package com.fhtd.raft.transport;
 
-import com.fhtd.raft.container.MarkMessage;
+import com.fhtd.raft.message.MarkMessage;
 import com.fhtd.raft.Serializer;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
@@ -19,7 +19,6 @@ public class CommandOutBoundHandler extends ChannelOutboundHandlerAdapter implem
     @Override
     public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
         if(msg instanceof MarkMessage) {
-            MarkMessage message = (MarkMessage) msg;
 
             byte[] data = serialize(msg);
 

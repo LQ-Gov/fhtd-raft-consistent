@@ -18,9 +18,9 @@ import java.net.SocketAddress;
 public class RemoteConnectHandler extends ChannelInboundHandlerAdapter {
     private final static Logger logger = LoggerFactory.getLogger(RemoteConnectHandler.class);
 
-    private Node local;
+    private final Node local;
 
-    private Node remote;
+    private final Node remote;
 
 
 
@@ -51,6 +51,7 @@ public class RemoteConnectHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        logger.info("remote server {}:{} is disconnected",remote.hostname(),remote.port());
         remote.active(false);
         super.channelInactive(ctx);
     }

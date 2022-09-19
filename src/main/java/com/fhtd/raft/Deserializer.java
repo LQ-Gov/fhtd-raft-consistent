@@ -15,7 +15,7 @@ public interface Deserializer {
         T obj = null;
         try {
             obj = cls.getDeclaredConstructor().newInstance();
-            Schema schema = RuntimeSchema.getSchema(obj.getClass());
+            Schema<T> schema = RuntimeSchema.getSchema (cls);
             ProtostuffIOUtil.mergeFrom(data, obj, schema);
         } catch (InstantiationException | IllegalAccessException | NoSuchMethodException | InvocationTargetException e) {
             e.printStackTrace();

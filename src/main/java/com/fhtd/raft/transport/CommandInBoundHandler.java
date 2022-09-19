@@ -34,12 +34,15 @@ public abstract class CommandInBoundHandler<M> extends ChannelInboundHandlerAdap
 
             buffer.readBytes(data);
 
+
             listener.receive(remote,deserialize(data));
         }
 
 
         super.channelRead(ctx, msg);
     }
+
+
 
     protected abstract M deserialize(byte[] data);
 }
