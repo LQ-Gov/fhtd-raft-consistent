@@ -1,6 +1,7 @@
 package com.fhtd.raft.transport;
 
 
+import com.fhtd.raft.Serializer;
 import com.fhtd.raft.node.Node;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
@@ -15,13 +16,12 @@ import java.net.SocketAddress;
  * @author liuqi19
  * @version : RemoteConnectHandler, 2019-04-12 12:13 liuqi19
  */
-public class RemoteConnectHandler extends ChannelInboundHandlerAdapter {
+public class RemoteConnectHandler extends ChannelInboundHandlerAdapter implements Serializer {
     private final static Logger logger = LoggerFactory.getLogger(RemoteConnectHandler.class);
 
     private final Node local;
 
     private final Node remote;
-
 
 
     public RemoteConnectHandler(Node local, Node remote) {
@@ -37,9 +37,11 @@ public class RemoteConnectHandler extends ChannelInboundHandlerAdapter {
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
 
 
-        logger.info("connected remote server:{},host:{},port:{}", remote.id(),remote.hostname(),remote.port());
+        logger.info("connected remote server:{},host:{},port:{}", remote.id(), remote.hostname(), remote.port());
 
-        ByteBuf buffer = ctx.alloc().buffer(4).writeInt(local.id());
+        byte[] meta = serialize(local);
+
+        ByteBuf buffer = ctx.alloc().buffer(meta.length + 4).writeInt(meta.length).writeBytes(meta);
 
         ctx.channel().writeAndFlush(buffer);
         InetSocketAddress socket = (InetSocketAddress) ctx.channel().remoteAddress();
@@ -51,7 +53,7 @@ public class RemoteConnectHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        logger.info("remote server {}:{} is disconnected",remote.hostname(),remote.port());
+        logger.info("remote server {}:{} is disconnected", remote.hostname(), remote.port());
         remote.active(false);
         super.channelInactive(ctx);
     }

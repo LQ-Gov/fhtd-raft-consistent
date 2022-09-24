@@ -1,5 +1,6 @@
 package com.fhtd.raft.transport;
 
+import com.fhtd.raft.Deserializer;
 import com.fhtd.raft.node.Node;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandler;
@@ -17,7 +18,7 @@ import java.util.concurrent.TimeUnit;
  * @version NodeConnectHandler, 2019-07-19 14:54 liuqi19
  **/
 @ChannelHandler.Sharable
-public class NodeConnectHandler extends ChannelInboundHandlerAdapter {
+public class NodeConnectHandler extends ChannelInboundHandlerAdapter implements Deserializer {
     private final static Logger logger = LoggerFactory.getLogger(NodeConnectHandler.class);
 
     private final Communicator communicator;
@@ -46,48 +47,51 @@ public class NodeConnectHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-        InetSocketAddress address = (InetSocketAddress) ctx.channel().remoteAddress();
 
         ByteBuf buffer = (ByteBuf) msg;
 
-
         if (buffer.readableBytes() >= 4) {
+            int len = buffer.getInt(0);
+            if(buffer.readableBytes()<len+4) return;
+            byte[] data = new byte[len];
+            buffer.readBytes(data);
 
-            int nodeId = buffer.readInt();
+            Node node = deserialize(data,Node.class);
 
 
-            if (nodeId > communicator.local().id() || communicator.remote(nodeId) == null) {
+            if (!node.isObserver()&& (node.id() > communicator.local().id())) {
                 logger.error("error connection!!! local id[{}] is less than remote id[{}],close the connection"
-                        , communicator.local().id(), nodeId);
+                        , communicator.local().id(), node.id());
                 ctx.disconnect();
                 return;
             }
 
-            Node node = communicator.remote(nodeId);
-            if (node == null) {
-                logger.error("error connection!!! remote node[{}] not exists", nodeId);
-                ctx.disconnect();
-                return;
+            Node session = communicator.remote(node.id());
+
+
+            if (session == null) {
+                communicator.join(node);
+                session = communicator.remote(node.id());
             }
 
 
-            synchronized (node) {
-                if (!node.isActive()) {
+            synchronized (session) {
+                if (!session.isActive()) {
 
                     ctx.channel().pipeline().remove(this);
 
                     Connection conn = new Connection(ctx.channel());
 
-                    this.connectionInitializer.init(node, conn);
+                    this.connectionInitializer.init(session, conn);
 
                     this.communicator.bind(node, new Connection(ctx.channel()));
 
-                    node.active(true);
+                    session.active(true);
                 }
             }
 
 
-            logger.info("node[{}] {}:{} active", node.id(), address.getHostName(), address.getPort());
+            logger.info("node[{}] {}:{} active", session.id(), session.hostname(), session.port());
         }
 
 

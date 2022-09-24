@@ -99,9 +99,10 @@ public class MultiRaftContainer implements RaftContainer {
         //建立本地节点自己和自己的通信
         communicator.bind(me, new LocalConnection<>(me, this.communicator::receive));
 
+
         //连接其他节点（连接方式为，只连接大于me.id的节点，以保证多个节点之间只存在一个channel,learn from zookeeper）
         for (Node remote : communicator.remotes()) {
-            if (remote.id() < me.id()) continue;
+            if (remote.isObserver() || (!me.isObserver() && remote.id() < me.id())) continue;
 
             ClientConnection conn = new ClientConnection(remote.hostname(), remote.port());
 
@@ -117,8 +118,8 @@ public class MultiRaftContainer implements RaftContainer {
 
         ticker.start();
 
-        for (Raft inc : raftInstances.values())
-            inc.exec();
+//        for (Raft inc : raftInstances.values())
+//            inc.exec();
 
         this.running = true;
 
@@ -144,21 +145,6 @@ public class MultiRaftContainer implements RaftContainer {
 
         return (T) raft;
 
-    }
-
-    @Override
-    public void join(Node node) {
-        communicator.join(node);
-        ClientConnection conn = new ClientConnection(node.hostname(), node.port());
-
-        conn.connect(new ChannelInitializer<SocketChannel>() {
-            @Override
-            protected void initChannel(SocketChannel ch) throws Exception {
-                connectionInitializer(node, conn);
-            }
-        });
-
-        communicator.bind(node, conn);
     }
 
 

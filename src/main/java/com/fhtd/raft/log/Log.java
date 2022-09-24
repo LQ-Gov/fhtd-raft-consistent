@@ -1,9 +1,7 @@
 package com.fhtd.raft.log;
 
 
-import com.fhtd.raft.AbstractEventListener;
 import com.fhtd.raft.HardState;
-import com.fhtd.raft.Raft;
 import com.fhtd.raft.Serializer;
 import com.fhtd.raft.wal.WAL;
 import org.apache.commons.collections4.CollectionUtils;
@@ -16,6 +14,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicStampedReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -56,14 +56,14 @@ public class Log implements Serializer, Runnable {
     private final WAL wal;
 
 
-    private Supplier<HardState> stateCreator;
+    private final Supplier<HardState> stateCreator;
 
     private Consumer<byte[]> recoverEventListener;
 
-    private Consumer<byte[]> commitEventListener;
+    private Consumer<Entry> commitEventListener;
 
 
-    public Log(Snapshotter snapshotter, WAL wal, Supplier<HardState> stateCreator, Consumer<byte[]> recoverEventListener, Consumer<byte[]> commitEventListener) {
+    public Log(Snapshotter snapshotter, WAL wal, Supplier<HardState> stateCreator, Consumer<byte[]> recoverEventListener, Consumer<Entry> commitEventListener) {
 
         this.wal = wal;
         this.snapshotter = snapshotter;
@@ -77,13 +77,14 @@ public class Log implements Serializer, Runnable {
     }
 
 
-    public void recover(Snapshot.Metadata metadata, List<Entry> entries) throws Exception {
+    public void recover(Snapshot.Metadata metadata, List<Entry> entries, long committedIndex) throws Exception {
 
         if (metadata != null && metadata != Snapshot.Metadata.EMPTY) {
             this.committed = metadata.index();
             this.offset = metadata.index();
             this.stable = metadata.index();
             this.applied = metadata.index();
+
         }
 
         if (entries != null) {
@@ -97,6 +98,19 @@ public class Log implements Serializer, Runnable {
             this.entries.addAll(entries);
 
             this.stable = entries.get(entries.size() - 1).index();
+        }
+
+        if (committed < committedIndex) committed = committedIndex;
+
+        List<Entry> committedEntries = nextEntries();
+
+        if(CollectionUtils.isNotEmpty(committedEntries)){
+            for (Entry entry : committedEntries) {
+                if (entry.data() == null || entry.data().length == 0)
+                    continue;
+                this.commitEventListener.accept(entry);
+            }
+            this.applied = committed;
         }
     }
 
@@ -149,29 +163,30 @@ public class Log implements Serializer, Runnable {
 
         long conflictIndex = findConflict(collection.entries());
 
-        if (conflictIndex == -1) return collection.lastIndex();
         //todo 冲突的index是已经committed的日志，这种情况理论不可能发生，如果发生，说明程序有bug，后续抛出异常直接把该节点清理掉
-        if (conflictIndex <= this.committed) {
+        if (conflictIndex >= 0 && conflictIndex <= this.committed) {
             logger.error("entry {} conflict with committed entry [committed({})]", conflictIndex, this.committed);
             return -1;
         }
 
-        Entry[] entries = collection.entries();
+        if (collection.size() > 0) {
+            Entry[] entries = collection.entries();
 
-        if (conflictIndex > collection.firstIndex()) {
-            entries = ArrayUtils.subarray(entries, (int) (conflictIndex - collection.firstIndex()), collection.size());
+            if (conflictIndex > collection.firstIndex()) {
+                entries = ArrayUtils.subarray(entries, (int) (conflictIndex - collection.firstIndex()), collection.size());
+            }
+
+
+            this.append(entries);
         }
 
-
-        this.append(entries);
-
-        this.commitTo(Math.min(collection.committedIndex(), collection.lastIndex()));
+        this.commitTo(Math.min(collection.committedIndex(), this.lastIndex()));
 
         synchronized (this) {
             this.notify();
         }
 
-        return collection.lastIndex();
+        return this.lastIndex();
 
     }
 
@@ -195,22 +210,19 @@ public class Log implements Serializer, Runnable {
     }
 
 
-    public long findLessThanTerm(long index,long term){
-        if(index>lastIndex()){
-            logger.error("index({}) is out of range [0, lastIndex({})] in findLessThanTerm",index,lastIndex());
+    public long findLessThanTerm(long index, long term) {
+        if (index > lastIndex()) {
+            logger.error("index({}) is out of range [0, lastIndex({})] in findLessThanTerm", index, lastIndex());
             return -1;
         }
 
-        while (term(index)>term) {
+        while (term(index) > term) {
             index--;
         }
         return index;
 
 
-
     }
-
-
 
 
     public void commitTo(long index) {
@@ -225,8 +237,6 @@ public class Log implements Serializer, Runnable {
                 }
             }
         }
-
-
     }
 
 
@@ -242,8 +252,9 @@ public class Log implements Serializer, Runnable {
     }
 
 
-    public Entry[] entries(long startIndex, int size) {
-        return this.slice(startIndex, this.lastIndex() + 1, size).toArray(new Entry[0]);
+    public List<Entry> entries(long startIndex, int size,boolean allowUnCommitted) {
+        long last = allowUnCommitted?this.lastIndex():this.committedIndex();
+        return this.slice(startIndex, last + 1, size);
     }
 
 
@@ -440,7 +451,6 @@ public class Log implements Serializer, Runnable {
                     if (CollectionUtils.isEmpty(entries) && CollectionUtils.isEmpty(committedEntries) && snapshot == null) {
                         Log.this.wait(1000 * 60 * 10);
                         continue;
-
                     }
 
 
@@ -462,26 +472,29 @@ public class Log implements Serializer, Runnable {
                         this.wal.save(snapshot.metadata());
                         this.wal.release(snapshot.metadata().index());
                         Log.this.snapshotTo(snapshot.metadata());
+                        this.recoverEventListener.accept(snapshot.data());
 //                            this.raft.recover(snapshot.data());
                     }
 
                     //将已经commit的日志应用到状态机
                     if (CollectionUtils.isNotEmpty(committedEntries)) {
+                        this.wal.save(state, null);
 
                         for (Entry entry : committedEntries) {
                             if (entry.data() == null || entry.data().length == 0)
                                 continue;
 
-                            Log.this.applyTo(entry.index());
 
-//                                this.raft.apply(entry.data());
+                            this.commitEventListener.accept(entry);
+
                             appliedIndex = entry.index();
+//                            Log.this.applyTo(appliedIndex);
                         }
                     }
 
                     try {
                         //生成快照
-                        if (appliedIndex - snapshotter.current().index() >= Snapshotter.SNAP_COUNT_THRESHOLD) {
+                        if (appliedIndex - snapshotter.current().index() >= snapshotter.SNAP_COUNT_THRESHOLD) {
 
 
                             Entry entry = Log.this.entry(appliedIndex);
@@ -492,8 +505,6 @@ public class Log implements Serializer, Runnable {
                             snapshotter.save(snapshot);
 
                             this.wal.save(snapshot.metadata());
-
-                            this.wal.release(snapshot.metadata().index());
 
 
                             Log.this.snapshotTo(snapshot.metadata());

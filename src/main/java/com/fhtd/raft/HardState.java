@@ -5,7 +5,7 @@ package com.fhtd.raft;
  * @version : HardState, 2019-04-23 17:12 liuqi19
  */
 public class HardState {
-    public final static HardState EMPTY=new HardState(0L,0,0L);
+    public final static HardState EMPTY=new HardState(0L,0,-1L);
     private Long term;
 
     private Integer vote;

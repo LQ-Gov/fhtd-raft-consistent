@@ -6,6 +6,8 @@ import com.fhtd.raft.container.RaftContainer;
 import com.fhtd.raft.impl.Example;
 import com.fhtd.raft.node.Node;
 
+import java.util.Properties;
+
 /**
  * @author liuqi19
  * @version $Id: App, 2019-04-02 13:40 liuqi19
@@ -36,22 +38,28 @@ public class App {
         }
 
 
-        //建立kv store(状态机)
-
-
-        //监听客户端端口
-
-
-        //启动Raft
-
-//        Raft raft = new Raft(Paths.get("data"), new DefaultActuator());
-
-//        Raft raft = new UnstableRaft(new DefaultActuator());
-        RaftContainer container = new MultiRaftContainer(me.id(),null);
+        RaftContainer container = new MultiRaftContainer(me.id(),createProperties(me));
 
         container.connect(me, members);
 
         Example example = container.create("example", Example.class);
+
+        Thread.sleep(10000);
+
+        if(me.id()==1) example.setValue(10);
+
+
+        while (true){
+            System.out.println("example value:"+example.getValue());
+            Thread.sleep(1000);
+        }
+
+    }
+
+    public static Properties createProperties(Node node){
+        Properties properties = new Properties();
+        properties.setProperty("data.path","./data/"+node.id());
+        return properties;
 
     }
 }

@@ -14,6 +14,4 @@ public interface RaftContainer {
 
     <T extends Raft> T create(String name, Class<T> cls) throws Exception;
 
-
-    void join(Node node);
 }

@@ -19,6 +19,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -92,10 +93,9 @@ public class WAL implements Serializer, Deserializer {
         this.decoder = new Decoder(channels);
         this.start = start;
 
-        if(channels!=null&&!channels.isEmpty()){
+        if (channels != null && !channels.isEmpty()) {
             this.encoder = new Encoder(tail());
-        }
-        else this.cut();
+        } else this.cut();
     }
 
     /**
@@ -133,7 +133,7 @@ public class WAL implements Serializer, Deserializer {
     }
 
 
-    public static WAL open(Path dir, Snapshot.Metadata metadata) throws IOException {
+    public static WAL open(Path dir, Snapshot.Metadata metadata, Properties properties) throws IOException {
 
         WAL wal = openAtIndex(dir, metadata == null ? new Snapshot.Metadata(-1, -1) : metadata, true);
 
@@ -147,15 +147,17 @@ public class WAL implements Serializer, Deserializer {
         }
 
         List<InduceFileChannel> channels = new LinkedList<>();
-        List<Path> paths = Files.list(dir).filter(x -> x.toString().endsWith(".wal")).collect(Collectors.toList());
+        List<Path> paths = Files.list(dir).filter(x -> x.toString().endsWith(".wal")).sorted().collect(Collectors.toList());
 
         if (CollectionUtils.isNotEmpty(paths)) {
 
             long index = Math.max(0, metadata.index());
+            index = 100;
+            ;
             for (int i = paths.size() - 1; i >= 0; i--) {
                 Matcher matcher = WAL_NAME_PATTERN.matcher(paths.get(i).toString());
                 if (matcher.find()) {
-                    long startIndex = Long.valueOf(matcher.group(2));
+                    long startIndex = Long.parseLong(matcher.group(2));
                     if (index >= startIndex) {
                         for (int j = i; j < paths.size(); j++) {
                             InduceFileChannel ch = InduceFileChannel.open(paths.get(j), StandardOpenOption.WRITE, StandardOpenOption.READ);
@@ -197,7 +199,6 @@ public class WAL implements Serializer, Deserializer {
                                 entries.set(index, entry);
                             } else throw new Error("日志错误");
                         }
-//                        this.lastIndex = entry.index();
                         break;
 
                     case STATE:
@@ -218,13 +219,13 @@ public class WAL implements Serializer, Deserializer {
 
             }
         } catch (EOFException ignored) {
-
+            throw ignored;
         }
 
         if (this.tail() != null) {
             this.encoder = new Encoder(this.tail());
         }
-        if(!entries.isEmpty()) {
+        if (!entries.isEmpty()) {
             this.lastIndex = entries.get(entries.size() - 1).index();
         }
 
@@ -236,14 +237,16 @@ public class WAL implements Serializer, Deserializer {
 
     public synchronized void save(HardState state, List<Entry> entries) throws IOException {
 
-        if (state == null || state == HardState.EMPTY || CollectionUtils.isEmpty(entries)) return;
+        if (state == null || state == HardState.EMPTY) return;
 
 
         //保存Entries
-        for (Entry entry : entries) {
-            Record record = new Record(RecordType.ENTRY, serialize(entry));
-            this.encoder.encode(record);
-            this.lastIndex = entry.index();
+        if(CollectionUtils.isNotEmpty(entries)) {
+            for (Entry entry : entries) {
+                Record record = new Record(RecordType.ENTRY, serialize(entry));
+                this.encoder.encode(record);
+                this.lastIndex = entry.index();
+            }
         }
 
         /********保存state*******/
@@ -256,7 +259,7 @@ public class WAL implements Serializer, Deserializer {
 
         encoder.flush();
 
-        if (tail().size() < SEGMENT_SIZE_BYTES) {
+        if (tail() != null && tail().size() < SEGMENT_SIZE_BYTES) {
             return;
         }
         this.cut();
@@ -300,6 +303,7 @@ public class WAL implements Serializer, Deserializer {
 
 
         encoder.flush();
+        release(metadata.index());
     }
 
 
@@ -317,7 +321,7 @@ public class WAL implements Serializer, Deserializer {
 
     private long seq() {
         InduceFileChannel channel = tail();
-        if(channel!=null) {
+        if (channel != null) {
             Matcher matcher = WAL_NAME_PATTERN.matcher(channel.filename());
 
             if (matcher.find()) {

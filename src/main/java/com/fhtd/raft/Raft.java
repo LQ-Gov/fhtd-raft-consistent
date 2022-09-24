@@ -11,16 +11,18 @@ import com.fhtd.raft.node.LocalNode;
 import com.fhtd.raft.node.Node;
 import com.fhtd.raft.node.RaftNode;
 import com.fhtd.raft.role.*;
+import com.fhtd.raft.role.Observer;
 import com.fhtd.raft.transport.Communicator;
 import com.fhtd.raft.wal.Stashed;
 import com.fhtd.raft.wal.WAL;
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.RandomUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
@@ -34,16 +36,16 @@ import java.util.stream.Collectors;
 public class Raft {
     private final static Logger logger = LoggerFactory.getLogger(Raft.class);
 
-    private final static Map<Message<?>, CompletableFuture> MESSAGE_FUTURE_MAP = new ConcurrentHashMap<>();
+    private final static Map<String, CompletableFuture<Boolean>> MESSAGE_FUTURE_MAP = new ConcurrentHashMap<>();
     /**
      * 定时器（leader:heart,other:election）
      */
-    private Ticker.Tick tick;
+    private final Ticker.Tick tick;
 
     /**
      * Raft分组内的成员
      */
-    private Map<Integer, RaftNode> remotes;
+    private final RemoteNodeCollection<RaftNode> remotes;
 
     private LocalNode me;
 
@@ -55,20 +57,16 @@ public class Raft {
      */
     private Log log;
 
-    /**
-     * 实际执行者（状态机）
-     */
-    private Actuator actuator;
 
-    private Communicator communicator;
+    private final Communicator communicator;
 
-    private Path dataPath;
+    private final Path dataPath;
 
 
     /**
      * 在当前轮次的投票结果
      */
-    private Map<RaftNode, Boolean> votes = new ConcurrentHashMap<>();
+    private final Map<RaftNode, Boolean> votes = new ConcurrentHashMap<>();
 
     /**
      * 我的投票
@@ -88,18 +86,18 @@ public class Raft {
                 new Follower(this::broadcastElection, this::followerCommandHandler),
                 new Candidate(this::broadcastElection, this::candidateCommandHandler),
                 new PreCandidate(this::broadcastElection, this::candidateCommandHandler),
-                new Leader(this::broadcastHeartbeat, this::leaderCommandHandler)
+                new Leader(this::broadcastHeartbeat, this::leaderCommandHandler),
+                new Observer(this::randomFetchEntries, this::observerCommandHandler)
         );
 
         //todo 这里后面要改成把事件绑定在communicator上，以便于新节点的加入通知
-        this.remotes = communicator.remotes().stream().map(node -> {
+        this.remotes = new RemoteNodeCollection<>(communicator.remotes().stream().map(node -> {
 
             node.bindEventListener(Node.Event.ACTIVE, Async.create(this::nodeEventListener)::accept);
             node.bindEventListener(Node.Event.INACTIVE, Async.create(this::nodeEventListener)::accept);
 
             return new RaftNode(node);
-        }).collect(Collectors.toMap(Node::id, x -> x));
-
+        }).collect(Collectors.toList()));
 
 
         ticker.connect(this.tick);
@@ -139,14 +137,15 @@ public class Raft {
 
         Message<Vote> message = Message.create(MessageType.VOTE, term, vote);
 
-        broadcast(message, true);
+        //这里要发送给self
+        broadcast(CollectionUtils.union(remotes.cores(), Collections.singleton(me)), message);
 
     }
 
     private void nodeEventListener(Node node, Node.Event event) {
         logger.debug("node:{},trigger event:{}", node.id(), event);
         node = node.id() == me.id() ? me : remotes.get(node.id());
-        if(node==null) return;
+        if (node == null) return;
         if (event == Node.Event.ACTIVE) node.active(true);
         else if (event == Node.Event.INACTIVE) node.active(false);
     }
@@ -162,13 +161,13 @@ public class Raft {
 
         RaftContext raftContext = new RaftContext(from, MESSAGE_FUTURE_MAP.remove(message));
 
-        logger.debug("receive message from {},message type is {}",from.id(),message.type());
+        logger.debug("receive message from {},message type is {}", from.id(), message.type());
 
         //如果消息小于当前term
         if (message.term() < this.term()) {
-            if (message.type() == MessageType.HEARTBEAT || message.type() == MessageType.APP) {
+            if (message.type() == MessageType.HEARTBEAT || message.type() == MessageType.APP || message.type() == MessageType.ASK) {
                 this.send(from, Message.create(MessageType.APP_RESP, this.term));
-            } else if (message.type() == MessageType.VOTE) {
+            } else if (message.type() == MessageType.VOTE && !this.me.is(RoleType.OBSERVER)) {
                 this.send(from, Message.create(MessageType.VOTE_RESP, this.term, false));
             }
             return;
@@ -225,6 +224,8 @@ public class Raft {
         switch (message.type()) {
             case VOTE: {
                 if (me == leader) return;
+                if (this.me.is(RoleType.OBSERVER)) return;
+
                 Vote vote = (Vote) message.data();
 
                 // 这里是判断如果发生网络分区,
@@ -323,6 +324,19 @@ public class Raft {
         }
     }
 
+    private void observerCommandHandler(final RaftContext context, Message<?> message) {
+        switch (message.type()) {
+            case APP:
+            case HEARTBEAT:
+            case SNAP:
+                commonCommandHandler(context, message);
+                break;
+            default:
+                throw new RuntimeException("not validate command");
+        }
+
+    }
+
 
     private void leaderCommandHandler(final RaftContext context, Message<?> message) {
 
@@ -330,7 +344,9 @@ public class Raft {
         switch (message.type()) {
             case PROP:
 
-                Entry.Collection ec = (Entry.Collection) message.data();
+                Value value = (Value) message.data();
+
+                Entry.Collection ec = new Entry.Collection(value.toEntry());
 
                 ec.update(this.term(), this.log.lastIndex() + 1);
 
@@ -351,29 +367,35 @@ public class Raft {
             case APP_RESP:
                 Accept accept = (Accept) message.data();
 
+
                 //当from的日志index和leader有冲突，并且无法自动修正时，会拒绝，那么此时就要从上一次match的位置重新修正
                 if (!accept.result()) {
-                    long confirmIndex = this.log.findLessThanTerm(accept.confirmIndex(),accept.confirmTerm());
+                    long confirmIndex = this.log.findLessThanTerm(accept.confirmIndex(), accept.confirmTerm());
                     from.decrease(accept.index(), confirmIndex);
-                    sync(from,true);
+                    sync(from, true);
 
                 } else {
                     boolean ok = from.update(accept.confirmIndex());
                     if (this.commit())
-                        this.broadcast((Consumer<RaftNode>) this::sync);
+                        this.broadcast(remotes.cores(), (Consumer<RaftNode>) this::sync);
                     else if (from.next() - 1 < this.log.lastIndex())
                         sync(from, false);
+                    logger.debug("receive APP_RESP,from:{}, result:{},ec.index:{},confirmTerm:{}, confirmIndex:{},updated next index:{}",
+                            from.id(), accept.result(), accept.index(), accept.confirmTerm(), accept.confirmIndex(), from.next());
                 }
+
+
                 break;
 
 
             case HEARTBEAT_RESP:
-//                long li = (long) message.data();
-//                if (li < from.match()) {
-//                    from.decrease(from.next() - 1, li + 1);
-//                }
                 if (from.match() < this.log.lastIndex())
                     this.sync(from);
+
+            case ASK:
+                long committed = (long) message.data();
+                from.update(committed);
+                sync(from, false);
         }
     }
 
@@ -410,10 +432,14 @@ public class Raft {
                     long hintTerm = this.log.term(hintIndex);
                     this.send(context.from(), Message.create(MessageType.APP_RESP, this.term(),
                             new Accept(false, ec.index(), hintTerm, hintIndex)));
-                }
-                else{
+
+                    logger.debug("callback APP_RESP message,entry size:{},commitIndex:{},result:{},ec.index:{},confirmTerm:{},confirmIndex:{}",
+                            ec.size(), ec.committedIndex(), false, ec.index(), hintTerm, hintIndex);
+                } else {
                     this.send(context.from(), Message.create(MessageType.APP_RESP, this.term(),
-                            new Accept(false, ec.index(), this.log.term(confirmIndex), confirmIndex)));
+                            new Accept(true, ec.index(), this.log.term(confirmIndex), confirmIndex)));
+                    logger.debug("callback APP_RESP message,entry size:{},commitIndex:{},result:{},ec.index:{},confirmTerm:{},confirmIndex:{}",
+                            ec.size(), ec.committedIndex(), true, ec.index(), this.log.term(confirmIndex), confirmIndex);
                 }
 
 
@@ -424,7 +450,7 @@ public class Raft {
 
             case HEARTBEAT:
 
-                logger.debug("handle heartbeat message,from:{}",context.from().id());
+                logger.debug("handle heartbeat message,from:{}", context.from().id());
 
                 Heartbeat heartbeat = (Heartbeat) message.data();
                 this.log.commitTo(heartbeat.committedIndex());
@@ -450,6 +476,16 @@ public class Raft {
                         new Accept(true, snapshot.metadata().term(), snapshot.metadata().index(), this.log.committedIndex())));
                 break;
 
+
+            case ASK:
+                if (!this.me.is(RoleType.OBSERVER)) {
+                    RaftNode from = remotes.get(context.from().id());
+
+                    long committed = (long) message.data();
+                    from.update(committed);
+                    sync(from, false);
+                }
+
         }
 
     }
@@ -459,7 +495,7 @@ public class Raft {
      */
     private boolean commit() {
 
-        RaftNode[] nodes = remotes.values().toArray(new RaftNode[0]);
+        RaftNode[] nodes = remotes.cores().toArray(new RaftNode[0]);
 
         long[] indexes = new long[nodes.length + 1];
 
@@ -485,9 +521,9 @@ public class Raft {
 
         long term = this.log.term(to.next() - 1);
         //TODO 第二个参数要可配置
-        Entry[] entries = this.log.entries(to.next(), Integer.MAX_VALUE);
+        List<Entry> entries = this.log.entries(to.next(), Integer.MAX_VALUE, !to.isObserver());
 
-        boolean empty = entries == null || entries.length == 0;
+        boolean empty = entries == null || entries.isEmpty();
 
         if (empty && !sendIfEmpty) return;
 
@@ -507,7 +543,7 @@ public class Raft {
             } else
                 logger.error("from next:({}) error,the next-1 term can't found,but no snapshot match", to.next());
         } else {
-            Entry.Collection ec = new Entry.Collection(term, to.next() - 1, this.log.committedIndex(), entries);
+            Entry.Collection ec = new Entry.Collection(term, to.next() - 1, this.log.committedIndex(), entries == null ? null : entries.toArray(new Entry[0]));
 
             //TODO 此处还有一系列处理逻辑，暂未看懂
 
@@ -526,54 +562,68 @@ public class Raft {
         }
     }
 
-//    private void recover(Snapshot snapshot, Stashed stashed) throws Exception {
-//        this.log.recover(snapshot == null ? Snapshot.Metadata.EMPTY : snapshot.metadata(), stashed.entries());
-//
-//        me.update(this.log.lastIndex());
-//        //还原hard state
-//        HardState state = stashed.state();
-//        if (state != null && state != HardState.EMPTY) {
-//
-//
-//            if (state.committed() < this.log.committedIndex() || state.committed() > this.log.lastIndex()) {
-//                logger.error("{} state.commit {} is out of range [{}, {}]", me.id(), state.committed(), this.log.committedIndex(), this.log.lastIndex());
-//            } else {
-//                this.log.commitTo(state.committed());
-//                this.term = state.term();
-//                this.voted = this.remotes.get(state.vote());
-//            }
-//        }
-//    }
+    private void recover(Snapshot snapshot, Stashed stashed) throws Exception {
+        if (snapshot != null) this.recover(snapshot.data());
+        //还原hard state
+        HardState state = stashed.state();
+
+        this.log.recover(
+                snapshot == null ? Snapshot.Metadata.EMPTY : snapshot.metadata(),
+                stashed.entries(),
+                state != null ? state.committed() : -1
+        );
+        me.update(this.log.lastIndex());
+
+        if (state != null && state != HardState.EMPTY) {
+
+            if (state.committed() < this.log.committedIndex() || state.committed() > this.log.lastIndex()) {
+                logger.error("{} state.commit {} is out of range [{}, {}]", me.id(), state.committed(), this.log.committedIndex(), this.log.lastIndex());
+                throw new Exception("error state");
+            }
+            this.term = state.term();
+            this.voted = this.remotes.get(state.vote());
+
+        }
+    }
 
     public synchronized void exec() throws Exception {
 
         Snapshotter snapshotter = Snapshotter.create(Paths.get(dataPath.toString(), name(), "snap"), this::snapshot);
 
 
-        WAL wal = WAL.open(Paths.get(dataPath.toString(), name(), "wal"), snapshotter.current());
+        WAL wal = WAL.open(Paths.get(dataPath.toString(), name(), "wal"), snapshotter.current(), null);
 
         Stashed stashed = wal.readAll();
 //
-        this.log = new Log(snapshotter, wal,this::hardState,this::recover,this::apply);
-//
-//        actuator.recover(snapshot == null ? null : snapshot.data());
+        this.log = new Log(snapshotter, wal, this::stateCreator, this::recover, this::commitEventListener);
 //
 //        //如果本地有日志记录，则恢复，否则继续执行
-//        if (stashed != null && stashed.validate())
-//            recover(snapshot, stashed);
+        if (stashed != null && stashed.validate())
+            recover(snapshotter.lastSnapshot(), stashed);
 
 
         this.becomeFollower(this.term(), this.leader);
 
     }
 
+    private void commitEventListener(Entry entry) {
+        Value value = new Value(entry);
+
+        CompletableFuture<Boolean> future = MESSAGE_FUTURE_MAP.get(value.id());
+
+        if (future != null) future.complete(true);
+
+        else apply(value.data());
+
+    }
+
     private int quorum() {
-        return (remotes.size() + 1) / 2 + 1;
+        return (remotes.cores().size() + 1) / 2 + 1;
     }
 
     private boolean checkQuorumActive() {
 
-        long activeCount = remotes.values().stream().filter(RaftNode::isActive).count() + 1;
+        long activeCount = remotes.cores().stream().filter(RaftNode::isActive).count() + 1;
 
         return activeCount >= quorum();
 
@@ -665,12 +715,12 @@ public class Raft {
 
         logger.info("i am leader:{}", me.id());
 
-        this.broadcast(Message.create(MessageType.APP, this.term(), null), false);
+        //这里把消息传递给其他节点，但不需要传给自己
+        this.broadcast(remotes.cores(), Message.create(MessageType.APP, this.term(), null));
     }
 
 
     private synchronized void broadcastHeartbeat() {
-
 
 
         if (!me.is(RoleType.LEADER)) return;
@@ -679,9 +729,10 @@ public class Raft {
             this.becomeFollower(this.term, null);
 
         else {
-            logger.debug("broadcast heartbeat,current term:{},commitIndex:{}",this.term(),this.log.committedIndex());
+            logger.debug("broadcast heartbeat,current term:{},commitIndex:{}", this.term(), this.log.committedIndex());
             Raft self = this;
-            broadcast(node -> {
+            broadcast(remotes.cores(), node -> {
+
                 long committed = Math.min(self.log.committedIndex(), node.match());
 
                 return Message.create(MessageType.HEARTBEAT, this.term, new Heartbeat(committed));
@@ -692,20 +743,34 @@ public class Raft {
     private synchronized void broadcastElection() {
 
         if (!me.is(RoleType.LEADER) && checkQuorumActive()) {
-            logger.info("start leader election,id:{},current term:{}",me.id(),this.term());
+            logger.info("start leader election,id:{},current term:{}", me.id(), this.term());
             this.campaign(true);
         }
     }
 
 
-    public <T> CompletableFuture<T> write(byte[] data) {
-        Entry.Collection collection = new Entry.Collection(new Entry(data));
+    private synchronized void randomFetchEntries() {
+        if (!me.is(RoleType.OBSERVER)) return;
 
-        CompletableFuture<T> future = new CompletableFuture<>();
+        List<RaftNode> nodes = remotes.cores().stream().filter(RaftNode::isActive).collect(Collectors.toList());
+        if (!nodes.isEmpty()) {
+            this.send(nodes.get(RandomUtils.nextInt(0, nodes.size())),
+                    Message.create(MessageType.ASK, this.term(), this.log.committedIndex()));
+        }
 
-        Message<Entry.Collection> msg = Message.create(MessageType.PROP, this.term(), collection);
+    }
 
-        //MESSAGE_FUTURE_MAP.put(msg, future);
+
+    public CompletableFuture<Boolean> write(byte[] data) {
+        String id = UUID.randomUUID().toString();
+
+        Value value = new Value(id, data);
+
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+
+        Message<Value> msg = Message.create(MessageType.PROP, this.term(), value);
+
+        MESSAGE_FUTURE_MAP.put(id, future);
 
         this.send(me, msg);
 
@@ -714,33 +779,24 @@ public class Raft {
     }
 
 
-    public Object read(byte[] data, boolean wait) {
-        return actuator.read(data, wait);
-    }
-
-
-    public HardState hardState() {
+    public HardState stateCreator() {
         return new HardState(this.term,
                 this.voted == null ? null : this.voted.id(),
                 this.log == null ? null : this.log.committedIndex());
     }
 
 
-    protected void broadcast(Message<?> message, boolean toSelf) {
+    protected void broadcast(Iterable<RaftNode> nodes, Message<?> message) {
 
-        if (toSelf)
-            communicator.sendTo(me, message);
 
-        for (RaftNode node : remotes.values()) {
-            if (node.isActive()) {
-                communicator.sendTo(node, message);
-            }
+        for (Node node : nodes) {
+            communicator.sendTo(node, message);
         }
     }
 
 
-    protected void broadcast(Function<RaftNode, Message<?>> function) {
-        for (RaftNode node : remotes.values()) {
+    protected void broadcast(Iterable<RaftNode> nodes, Function<RaftNode, Message<?>> function) {
+        for (RaftNode node : nodes) {
             if (!node.isActive()) continue;
 
             communicator.sendTo(node, function.apply(node));
@@ -748,8 +804,8 @@ public class Raft {
     }
 
 
-    protected void broadcast(Consumer<RaftNode> consumer) {
-        for (RaftNode node : remotes.values()) {
+    protected void broadcast(Iterable<RaftNode> nodes, Consumer<RaftNode> consumer) {
+        for (RaftNode node : nodes) {
             if (!node.isActive()) continue;
 
             consumer.accept(node);

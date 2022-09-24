@@ -20,9 +20,11 @@ public class Encoder implements Serializer {
 
 
     public void encode(Record record) throws IOException {
-        long crc32 = CrcUtils.sum32(record.data());
+
 
         byte[] data = serialize(record);
+
+        long crc32 = CrcUtils.sum32(data);
 
         ByteBuffer buffer = ByteBuffer.allocate(8 +8+ data.length);
         buffer.putLong(data.length).putLong(crc32).put(data);

@@ -1,8 +1,5 @@
 package com.fhtd.raft.node;
 
-import com.fhtd.raft.AbstractEventListener;
-import com.google.common.eventbus.EventBus;
-
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +17,8 @@ public class Node {
 
     private boolean active=false;
 
+    private boolean observer=false;
+
     private final transient Map<Event, List<BiConsumer<Node,Node.Event>>> listeners = new ConcurrentHashMap<>();
 
 
@@ -28,17 +27,20 @@ public class Node {
 
 
     public Node(Node node) {
-        this.id = node.id();
-        this.hostname = node.hostname();
-        this.port = node.port();
-        this.active = node.active;
+        this(node.id(),node.hostname(),node.port(),node.isActive(),node.isObserver());
     }
 
+    public Node(int id,String hostname,int port){
+        this(id,hostname,port,false,false);
 
-    public Node(int id, String hostname, int port) {
+    }
+
+    public Node(int id, String hostname, int port,boolean active, boolean observer) {
         this.id = id;
         this.hostname = hostname;
         this.port = port;
+        this.active = active;
+        this.observer = observer;
     }
 
     public int id() {
@@ -62,6 +64,10 @@ public class Node {
     public boolean isActive() {
         return active;
     }
+
+
+
+    public boolean isObserver(){return observer;}
 
 
     public void bindEventListener(Event event, BiConsumer<Node,Node.Event> listener){

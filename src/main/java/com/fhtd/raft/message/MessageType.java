@@ -59,6 +59,12 @@ public enum  MessageType {
      */
     VOTE_RESP,
 
+    /**
+     * observer向core申请日志同步*
+     */
+
+    ASK,
+
 
 
 
