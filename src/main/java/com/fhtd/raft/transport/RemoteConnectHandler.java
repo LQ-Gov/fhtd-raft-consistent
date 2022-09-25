@@ -23,14 +23,13 @@ public class RemoteConnectHandler extends ChannelInboundHandlerAdapter implement
 
     private final Node remote;
 
+    private final Communicator communicator;
 
-    public RemoteConnectHandler(Node local, Node remote) {
+
+    public RemoteConnectHandler(Node local, Node remote,Communicator communicator) {
         this.local = local;
         this.remote = remote;
-    }
-
-    public RemoteConnectHandler(Node remote) {
-        this(null, remote);
+        this.communicator = communicator;
     }
 
     @Override
@@ -54,7 +53,7 @@ public class RemoteConnectHandler extends ChannelInboundHandlerAdapter implement
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         logger.info("remote server {}:{} is disconnected", remote.hostname(), remote.port());
-        remote.active(false);
+        communicator.active(remote,false);
         super.channelInactive(ctx);
     }
 }

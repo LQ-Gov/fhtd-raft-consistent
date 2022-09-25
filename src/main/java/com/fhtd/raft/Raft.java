@@ -90,14 +90,15 @@ public class Raft {
                 new Observer(this::randomFetchEntries, this::observerCommandHandler)
         );
 
+        this.communicator.bindEventListener(Communicator.Event.ACTIVE,Async.create(this::nodeEventListener)::accept);
+        this.communicator.bindEventListener(Communicator.Event.INACTIVE,Async.create(this::nodeEventListener)::accept);
+        this.communicator.bindEventListener(Communicator.Event.JOIN,Async.create(this::nodeEventListener)::accept);
+        this.communicator.bindEventListener(Communicator.Event.QUIT,Async.create(this::nodeEventListener)::accept);
+
+
         //todo 这里后面要改成把事件绑定在communicator上，以便于新节点的加入通知
-        this.remotes = new RemoteNodeCollection<>(communicator.remotes().stream().map(node -> {
-
-            node.bindEventListener(Node.Event.ACTIVE, Async.create(this::nodeEventListener)::accept);
-            node.bindEventListener(Node.Event.INACTIVE, Async.create(this::nodeEventListener)::accept);
-
-            return new RaftNode(node);
-        }).collect(Collectors.toList()));
+        this.remotes = new RemoteNodeCollection<>(communicator.remotes().stream()
+                .map(RaftNode::new).collect(Collectors.toList()));
 
 
         ticker.connect(this.tick);
@@ -142,12 +143,14 @@ public class Raft {
 
     }
 
-    private void nodeEventListener(Node node, Node.Event event) {
+    private void nodeEventListener(Node node, Communicator.Event event) {
         logger.debug("node:{},trigger event:{}", node.id(), event);
         node = node.id() == me.id() ? me : remotes.get(node.id());
         if (node == null) return;
-        if (event == Node.Event.ACTIVE) node.active(true);
-        else if (event == Node.Event.INACTIVE) node.active(false);
+        if (event == Communicator.Event.ACTIVE) node.active(true);
+        else if (event == Communicator.Event.INACTIVE) node.active(false);
+        else if(event == Communicator.Event.JOIN) remotes.add(new RaftNode(node));
+        else if(event==Communicator.Event.QUIT) remotes.remove(node.id());
     }
 
     /**

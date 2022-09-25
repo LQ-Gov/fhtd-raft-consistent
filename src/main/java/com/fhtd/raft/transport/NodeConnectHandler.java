@@ -86,7 +86,7 @@ public class NodeConnectHandler extends ChannelInboundHandlerAdapter implements 
 
                     this.communicator.bind(node, new Connection(ctx.channel()));
 
-                    session.active(true);
+                    communicator.active(session,true);
                 }
             }
 

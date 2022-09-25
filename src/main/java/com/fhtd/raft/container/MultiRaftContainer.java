@@ -154,7 +154,7 @@ public class MultiRaftContainer implements RaftContainer {
 
         //消息体大小判断
         ch.pipeline().addLast(new LengthFieldBasedFrameDecoder(Integer.MAX_VALUE, 0, 4));
-        ch.pipeline().addLast(new RemoteConnectHandler(this.communicator.local(), remote));
+        ch.pipeline().addLast(new RemoteConnectHandler(this.communicator.local(), remote,this.communicator));
         ch.pipeline().addLast(new MarkCommandInBoundHandler(remote, this.communicator::receive));
         ch.pipeline().addLast(new CommandOutBoundHandler());
     }

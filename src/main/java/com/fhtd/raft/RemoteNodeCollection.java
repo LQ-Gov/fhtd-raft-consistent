@@ -43,4 +43,9 @@ public class RemoteNodeCollection<T extends Node> {
         remotes.put(node.id(),node);
 
     }
+
+    public void remove(int id){
+        remotes.remove(id);
+
+    }
 }

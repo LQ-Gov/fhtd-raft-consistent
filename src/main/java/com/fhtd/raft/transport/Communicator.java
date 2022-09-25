@@ -8,6 +8,7 @@ import com.fhtd.raft.node.Node;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 /**
@@ -22,7 +23,8 @@ public class Communicator {
 
     private final Map<Integer, Connection> connections = new ConcurrentHashMap<>();
 
-    private final Map<String, List<CommandReceiveListener>> commandReceiveListeners = new HashMap<>();
+    private final transient Map<String, List<CommandReceiveListener>> commandReceiveListeners = new HashMap<>();
+    private final transient Map<Event, List<BiConsumer<Node,Event>>> nodeEventListeners = new ConcurrentHashMap<>();
 
 
     public Communicator(Node me, Collection<Node> remotes) {
@@ -55,6 +57,7 @@ public class Communicator {
 
     public void join(Node node){
         this.remotes.put(node.id(),node);
+        trigger(Event.JOIN,node);
 
     }
 
@@ -72,6 +75,13 @@ public class Communicator {
             listener.receive(from, message.data());
     }
 
+    public void  active(Node node,boolean value){
+        node.active(value);
+
+        trigger(value?Event.ACTIVE:Event.INACTIVE,node);
+
+    }
+
 //    private void event(Node from,Node.Event event){
 //        for(NodeEventListener listener:nodeEventListeners){
 //            listener.handle(from,event);
@@ -82,6 +92,33 @@ public class Communicator {
 
         commandReceiveListeners.computeIfAbsent(mark, x -> new LinkedList<>()).add(listener);
         return new MarkedCommunicator(mark, this);
+    }
+
+    public void bindEventListener(Event event, BiConsumer<Node,Event> listener){
+        nodeEventListeners.computeIfAbsent(event,x->new LinkedList<>()).add(listener);
+
+    }
+
+    public void removeEventListener(Node.Event event, BiConsumer<Node,Event> listener){
+        if(nodeEventListeners.containsKey(event)){
+            nodeEventListeners.get(event).remove(listener);
+        }
+
+    }
+
+    private void trigger(Event event,Node node){
+        List<BiConsumer<Node,Event>> list = nodeEventListeners.get(event);
+        if(list!=null){
+            list.forEach(x->x.accept(node,event));
+        }
+
+    }
+
+    public static enum Event {
+        JOIN,
+        QUIT,
+        ACTIVE,
+        INACTIVE
     }
 
 
