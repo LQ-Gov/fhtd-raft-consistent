@@ -135,7 +135,7 @@ public class WAL implements Serializer, Deserializer {
 
     public static WAL open(Path dir, Snapshot.Metadata metadata, Properties properties) throws IOException {
 
-        WAL wal = openAtIndex(dir, metadata == null ? new Snapshot.Metadata(-1, -1) : metadata, true);
+        WAL wal = openAtIndex(dir, metadata == null ? new Snapshot.Metadata(-1, -1,null) : metadata, true);
 
         return wal;
 
@@ -198,6 +198,8 @@ public class WAL implements Serializer, Deserializer {
                             else if (index < entries.size()) {
                                 entries.set(index, entry);
                             } else throw new Error("日志错误");
+
+                            
                         }
                         break;
 

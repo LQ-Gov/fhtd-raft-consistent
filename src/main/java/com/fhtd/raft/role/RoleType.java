@@ -5,5 +5,5 @@ package com.fhtd.raft.role;
  * @version : NodeRole, 2019-04-08 11:24 liuqi19
  */
 public enum RoleType {
-    FOLLOWER,LEADER,CANDIDATE,PRE_CANDIDATE,ASSISTER,OBSERVER;
+    FOLLOWER,LEADER,CANDIDATE,PRE_CANDIDATE,ASSISTER,LEARNER,DISCARD;
 }

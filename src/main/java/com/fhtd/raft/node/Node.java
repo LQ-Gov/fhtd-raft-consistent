@@ -17,7 +17,7 @@ public class Node {
 
     private boolean active=false;
 
-    private boolean observer=false;
+    private boolean core=true;
 
     private final transient Map<Event, List<BiConsumer<Node,Node.Event>>> listeners = new ConcurrentHashMap<>();
 
@@ -27,20 +27,25 @@ public class Node {
 
 
     public Node(Node node) {
-        this(node.id(),node.hostname(),node.port(),node.isActive(),node.isObserver());
+        this(node.id(),node.hostname(),node.port(),node.isActive(),node.isCore());
     }
 
     public Node(int id,String hostname,int port){
-        this(id,hostname,port,false,false);
+        this(id,hostname,port,false,true);
 
     }
 
-    public Node(int id, String hostname, int port,boolean active, boolean observer) {
+    public Node(int id,String hostname,int port,boolean core){
+        this(id, hostname, port,false,core);
+
+    }
+
+    public Node(int id, String hostname, int port,boolean active, boolean core) {
         this.id = id;
         this.hostname = hostname;
         this.port = port;
         this.active = active;
-        this.observer = observer;
+        this.core = core;
     }
 
     public int id() {
@@ -67,7 +72,7 @@ public class Node {
 
 
 
-    public boolean isObserver(){return observer;}
+    public boolean isCore(){return core;}
 
 
     public void bindEventListener(Event event, BiConsumer<Node,Node.Event> listener){
@@ -93,6 +98,19 @@ public class Node {
     public static enum Event {
         ACTIVE,
         INACTIVE
+    }
+
+    public enum State{
+        /**
+         * 在集群中
+         */
+        IN,
+        /**
+         * 不在集群中
+         */
+        OUT,
+        NEW,
+
     }
 
 

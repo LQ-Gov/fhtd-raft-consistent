@@ -1,10 +1,11 @@
 package com.fhtd.raft.transport;
 
 
-
-
 import com.fhtd.raft.message.MarkMessage;
+import com.fhtd.raft.message.NodeControl;
 import com.fhtd.raft.node.Node;
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.collections4.ListUtils;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -17,20 +18,29 @@ import java.util.stream.Collectors;
  **/
 public class Communicator {
 
-    private Node me;
+    private Meta meta;
 
-    private Map<Integer, Node> remotes;
+//    private Node me;
+
+//    private Map<Integer, Node> remotes;
 
     private final Map<Integer, Connection> connections = new ConcurrentHashMap<>();
 
     private final transient Map<String, List<CommandReceiveListener>> commandReceiveListeners = new HashMap<>();
-    private final transient Map<Event, List<BiConsumer<Node,Event>>> nodeEventListeners = new ConcurrentHashMap<>();
+    private final transient Map<Event, List<BiConsumer<Node, Event>>> nodeEventListeners = new ConcurrentHashMap<>();
 
 
     public Communicator(Node me, Collection<Node> remotes) {
-        this.me = me;
+//        this.me = me;
 
-        this.remotes = remotes.stream().collect(Collectors.toMap(Node::id, x -> x));
+//        this.remotes = remotes.stream().collect(Collectors.toMap(Node::id, x -> x));
+
+
+        List<Node> cluster = ListUtils.union(new LinkedList<>(remotes), Collections.singletonList(me));
+
+        this.meta = new Meta(me.id(), cluster, 0);
+
+
     }
 
 
@@ -44,20 +54,26 @@ public class Communicator {
 
 
     public Node local() {
-        return me;
+        return meta().me();
     }
 
     public Node remote(int id) {
-        return remotes.get(id);
+        return meta().cluster().stream().filter(x -> x.id() == id).findFirst().orElse(null);
+
     }
 
     public Collection<Node> remotes() {
-        return remotes.values();
+        return meta().cluster().stream().filter(x -> x.id() != this.meta().id()).collect(Collectors.toList());
     }
 
-    public void join(Node node){
-        this.remotes.put(node.id(),node);
-        trigger(Event.JOIN,node);
+    public void join(Node node) {
+        List<Node> nc = ListUtils.union(this.meta().cluster(), Collections.singletonList(node));
+        Meta n = new Meta(this.meta().id(), nc, this.meta().version() + 1);
+
+        if (this.meta.update(n)) {
+//            this.bind(node, connection);
+            trigger(Event.JOIN, node);
+        }
 
     }
 
@@ -69,16 +85,26 @@ public class Communicator {
     public void receive(Node from, MarkMessage message) {
         List<CommandReceiveListener> listeners = commandReceiveListeners.get(message.mark());
 
-        if(listeners==null) return;
+        if (listeners == null) return;
 
         for (CommandReceiveListener listener : listeners)
             listener.receive(from, message.data());
     }
 
-    public void  active(Node node,boolean value){
+    public void nodeControl(Node from, NodeControl message){
+
+
+    }
+
+    public void active(Node node, boolean value) {
         node.active(value);
 
-        trigger(value?Event.ACTIVE:Event.INACTIVE,node);
+        trigger(value ? Event.ACTIVE : Event.INACTIVE, node);
+
+    }
+
+    public Node.State state(Node node) {
+        return meta().state(node.id());
 
     }
 
@@ -94,22 +120,26 @@ public class Communicator {
         return new MarkedCommunicator(mark, this);
     }
 
-    public void bindEventListener(Event event, BiConsumer<Node,Event> listener){
-        nodeEventListeners.computeIfAbsent(event,x->new LinkedList<>()).add(listener);
+    public void bindEventListener(Event event, BiConsumer<Node, Event> listener) {
+        nodeEventListeners.computeIfAbsent(event, x -> new LinkedList<>()).add(listener);
 
     }
 
-    public void removeEventListener(Node.Event event, BiConsumer<Node,Event> listener){
-        if(nodeEventListeners.containsKey(event)){
+    public void removeEventListener(Event event, BiConsumer<Node, Event> listener) {
+        if (nodeEventListeners.containsKey(event)) {
             nodeEventListeners.get(event).remove(listener);
         }
 
     }
 
-    private void trigger(Event event,Node node){
-        List<BiConsumer<Node,Event>> list = nodeEventListeners.get(event);
-        if(list!=null){
-            list.forEach(x->x.accept(node,event));
+    public Meta meta() {
+        return meta;
+    }
+
+    private void trigger(Event event, Node node) {
+        List<BiConsumer<Node, Event>> list = nodeEventListeners.get(event);
+        if (list != null) {
+            list.forEach(x -> x.accept(node, event));
         }
 
     }
@@ -119,6 +149,76 @@ public class Communicator {
         QUIT,
         ACTIVE,
         INACTIVE
+    }
+
+
+    public static class Meta {
+        private int id;
+        private long version;
+
+        private List<Node> cluster;
+
+        private Map<Integer, Node.State> states;
+
+        public Meta() {
+        }
+
+        ;
+
+        public Meta(int id, List<Node> cluster, long version) {
+            this.id = id;
+            this.version = version;
+            this.cluster = cluster;
+
+        }
+
+        public int id() {
+            return id;
+        }
+
+        public long version() {
+            return version;
+        }
+
+        public List<Node> cluster() {
+            return Collections.unmodifiableList(new LinkedList<>(cluster));
+        }
+
+
+        public boolean update(Meta meta) {
+            if (meta != null && meta.version > this.version) {
+                this.version = meta.version();
+                this.cluster = meta.cluster();
+                this.states = meta.states;
+                return true;
+            }
+            return false;
+        }
+
+        public boolean update(Node node, Node.State state) {
+            if(contain(node)){
+                states.put(node.id(),state);
+
+                return true;
+            }
+            return false;
+
+        }
+
+        public Node me() {
+            return cluster().stream().filter(x -> x.id() == this.id()).findFirst().orElse(null);
+        }
+
+        public boolean contain(Node node) {
+            return cluster.stream().anyMatch(x -> x.id() == node.id());
+
+        }
+
+        public Node.State state(int id){
+            return states.get(id);
+
+        }
+
     }
 
 

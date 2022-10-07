@@ -16,6 +16,12 @@ public enum  MessageType {
      * 节点断开连接
      */
     INACTIVE,
+    /**
+     * 集群变更
+     */
+    CLUSTER_CHANGE,
+
+    CLUSTER_CHANGE_COMMIT,
 
     //region 几个基本常用消息类型
     /**

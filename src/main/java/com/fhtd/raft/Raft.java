@@ -2,20 +2,18 @@ package com.fhtd.raft;
 
 
 import com.fhtd.raft.exception.LeaderNotFoundException;
-import com.fhtd.raft.log.Entry;
-import com.fhtd.raft.log.Log;
-import com.fhtd.raft.log.Snapshot;
-import com.fhtd.raft.log.Snapshotter;
+import com.fhtd.raft.log.*;
 import com.fhtd.raft.message.*;
 import com.fhtd.raft.node.LocalNode;
 import com.fhtd.raft.node.Node;
 import com.fhtd.raft.node.RaftNode;
 import com.fhtd.raft.role.*;
-import com.fhtd.raft.role.Observer;
+import com.fhtd.raft.role.Learner;
 import com.fhtd.raft.transport.Communicator;
 import com.fhtd.raft.wal.Stashed;
 import com.fhtd.raft.wal.WAL;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.RandomUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,13 +43,15 @@ public class Raft {
     /**
      * Raft分组内的成员
      */
-    private final RemoteNodeCollection<RaftNode> remotes;
+    private final Cluster<RaftNode> cluster;
 
     private LocalNode me;
 
     private RaftNode leader;
 
     private long term;
+
+    private JointConsensus jointConsensus;
     /**
      * entry 日志
      */
@@ -73,9 +73,9 @@ public class Raft {
      */
     private Node voted;
 
-    private String name;
+    private final String name;
 
-    public Raft(String name, Path dataPath, Communicator communicator, Ticker ticker) {
+    public Raft(String name, Path dataPath, Communicator communicator, Ticker ticker) throws Exception {
         this.name = name;
         this.dataPath = dataPath;
         //定时器运行周期为100,租约时长为5*100=500ms
@@ -87,19 +87,24 @@ public class Raft {
                 new Candidate(this::broadcastElection, this::candidateCommandHandler),
                 new PreCandidate(this::broadcastElection, this::candidateCommandHandler),
                 new Leader(this::broadcastHeartbeat, this::leaderCommandHandler),
-                new Observer(this::randomFetchEntries, this::observerCommandHandler)
+                new Learner(this::randomFetchEntries, this::learnerCommandHandler),
+                new Discard(this::discard, this::discardCommandHandler)
+
         );
 
-        this.communicator.bindEventListener(Communicator.Event.ACTIVE,Async.create(this::nodeEventListener)::accept);
-        this.communicator.bindEventListener(Communicator.Event.INACTIVE,Async.create(this::nodeEventListener)::accept);
-        this.communicator.bindEventListener(Communicator.Event.JOIN,Async.create(this::nodeEventListener)::accept);
-        this.communicator.bindEventListener(Communicator.Event.QUIT,Async.create(this::nodeEventListener)::accept);
+        this.communicator.bindEventListener(Communicator.Event.ACTIVE, Async.create(this::nodeEventListener)::accept);
+        this.communicator.bindEventListener(Communicator.Event.INACTIVE, Async.create(this::nodeEventListener)::accept);
+        this.communicator.bindEventListener(Communicator.Event.JOIN, Async.create(this::nodeEventListener)::accept);
+        this.communicator.bindEventListener(Communicator.Event.QUIT, Async.create(this::nodeEventListener)::accept);
 
 
         //todo 这里后面要改成把事件绑定在communicator上，以便于新节点的加入通知
-        this.remotes = new RemoteNodeCollection<>(communicator.remotes().stream()
-                .map(RaftNode::new).collect(Collectors.toList()));
+        this.cluster = new Cluster<>(me,
+                communicator.remotes().stream()
+                        .map(RaftNode::new).collect(Collectors.toList()));
 
+
+        this.exec();
 
         ticker.connect(this.tick);
     }
@@ -139,18 +144,26 @@ public class Raft {
         Message<Vote> message = Message.create(MessageType.VOTE, term, vote);
 
         //这里要发送给self
-        broadcast(CollectionUtils.union(remotes.cores(), Collections.singleton(me)), message);
+        broadcast(cluster.cores(), message);
 
     }
 
     private void nodeEventListener(Node node, Communicator.Event event) {
         logger.debug("node:{},trigger event:{}", node.id(), event);
-        node = node.id() == me.id() ? me : remotes.get(node.id());
+        node = node.id() == me.id() ? me : cluster.get(node.id());
         if (node == null) return;
         if (event == Communicator.Event.ACTIVE) node.active(true);
         else if (event == Communicator.Event.INACTIVE) node.active(false);
-        else if(event == Communicator.Event.JOIN) remotes.add(new RaftNode(node));
-        else if(event==Communicator.Event.QUIT) remotes.remove(node.id());
+        else if (event == Communicator.Event.JOIN) {
+            //这里如果是core节点的话，需要进行集群的调整，可能会导致出现脑裂问题,例如由3节点变为5节点，
+            // 可能出现旧集群,仅需2节点确认即可，而未达到多数(3)同意，而新集群则通过了3节点同意，从而出现双leader
+            //关键词:joint consensus
+            //所以先变成learner,不参与选举
+            cluster.add(new RaftNode(node, true));
+        } else if (event == Communicator.Event.QUIT) {
+            if (node.id() == me.id() && !me.isCore()) me.discard();
+            cluster.remove(node.id());
+        }
     }
 
     /**
@@ -160,7 +173,7 @@ public class Raft {
      */
 
     private synchronized void commandReceiverListener(Node node, Message<?> message) {
-        RaftNode from = node.id() == me.id() ? me : remotes.get(node.id());
+        RaftNode from = cluster.get(node.id());
 
         RaftContext raftContext = new RaftContext(from, MESSAGE_FUTURE_MAP.remove(message));
 
@@ -170,7 +183,7 @@ public class Raft {
         if (message.term() < this.term()) {
             if (message.type() == MessageType.HEARTBEAT || message.type() == MessageType.APP || message.type() == MessageType.ASK) {
                 this.send(from, Message.create(MessageType.APP_RESP, this.term));
-            } else if (message.type() == MessageType.VOTE && !this.me.is(RoleType.OBSERVER)) {
+            } else if (message.type() == MessageType.VOTE && !this.me.is(RoleType.LEARNER)) {
                 this.send(from, Message.create(MessageType.VOTE_RESP, this.term, false));
             }
             return;
@@ -227,7 +240,7 @@ public class Raft {
         switch (message.type()) {
             case VOTE: {
                 if (me == leader) return;
-                if (this.me.is(RoleType.OBSERVER)) return;
+                if (this.me.is(RoleType.LEARNER)) return;
 
                 Vote vote = (Vote) message.data();
 
@@ -327,7 +340,7 @@ public class Raft {
         }
     }
 
-    private void observerCommandHandler(final RaftContext context, Message<?> message) {
+    private void learnerCommandHandler(final RaftContext context, Message<?> message) {
         switch (message.type()) {
             case APP:
             case HEARTBEAT:
@@ -344,6 +357,8 @@ public class Raft {
     private void leaderCommandHandler(final RaftContext context, Message<?> message) {
 
         RaftNode from = context.from();
+
+
         switch (message.type()) {
             case PROP:
 
@@ -379,14 +394,44 @@ public class Raft {
 
                 } else {
                     boolean ok = from.update(accept.confirmIndex());
-                    if (this.commit())
-                        this.broadcast(remotes.cores(), (Consumer<RaftNode>) this::sync);
-                    else if (from.next() - 1 < this.log.lastIndex())
+                    if (this.commit()) {
+
+                        //如果当前在进行集群调整
+                        if (jointConsensus != null && this.log.committedIndex() >= jointConsensus.index()) {
+                            long index = this.log.append(new JointEntry(this.term(), this.log.lastIndex(), jointConsensus.prev(), jointConsensus.next(), 2));
+                            this.me.update(index);
+                        }
+                        this.broadcast(
+                                cluster.cores(true), (Consumer<RaftNode>) this::sync);
+                    } else if (from.next() - 1 < this.log.lastIndex())
                         sync(from, false);
                     logger.debug("receive APP_RESP,from:{}, result:{},ec.index:{},confirmTerm:{}, confirmIndex:{},updated next index:{}",
                             from.id(), accept.result(), accept.index(), accept.confirmTerm(), accept.confirmIndex(), from.next());
                 }
 
+
+                break;
+
+            case CLUSTER_CHANGE:
+                if (jointConsensus != null) {
+                    logger.warn("cluster in joint consensus");
+                }
+                List<Integer> prev = cluster.cores(x -> cluster.state(x) != Cluster.State.NEW).stream().map(Node::id)
+                        .collect(Collectors.toList());
+
+
+                List<Integer> next = cluster.cores(x -> cluster.state(x) != Cluster.State.QUIT).stream().map(Node::id)
+                        .collect(Collectors.toList());
+
+                Entry entry = new JointEntry(this.term(), this.log.lastIndex() + 1, prev, next, 1);
+                long index = this.log.append(entry);
+
+                this.jointConsensus = new JointConsensus(index, prev, next);
+
+                this.me.update(index);
+                //这里要同步给
+
+                this.broadcast(this.cluster.cores(true), (Consumer<RaftNode>) this::sync);
 
                 break;
 
@@ -481,8 +526,8 @@ public class Raft {
 
 
             case ASK:
-                if (!this.me.is(RoleType.OBSERVER)) {
-                    RaftNode from = remotes.get(context.from().id());
+                if (!this.me.is(RoleType.LEARNER)) {
+                    RaftNode from = cluster.get(context.from().id());
 
                     long committed = (long) message.data();
                     from.update(committed);
@@ -497,20 +542,27 @@ public class Raft {
      * 尝试进行commit,未必成功
      */
     private boolean commit() {
+        List<RaftNode> c = cluster.cores(x -> cluster.state(x) == Cluster.State.IN || cluster.state(x) == Cluster.State.QUIT);
 
-        RaftNode[] nodes = remotes.cores().toArray(new RaftNode[0]);
+        List<Long> indexes = c.stream().map(RaftNode::match).sorted().collect(Collectors.toList());
 
-        long[] indexes = new long[nodes.length + 1];
+        long mci = indexes.get(indexes.size() - quorum());
 
-        for (int i = 0; i < nodes.length; i++) {
-            indexes[i] = nodes[i].match();
+
+        if (jointConsensus != null) {
+            c = cluster.cores(x -> cluster.state(x) == Cluster.State.NEW || cluster.state(x) == Cluster.State.QUIT);
+            indexes = c.stream().map(RaftNode::match).sorted().collect(Collectors.toList());
+
+            long newClusterCommitted = indexes.get(indexes.size() - quorum());
+            logger.info("joint consensus state,main cluster committed:{},new cluster committed:{}", mci, newClusterCommitted);
+            mci = Math.min(mci, newClusterCommitted);
         }
 
-        indexes[indexes.length - 1] = me.match();
+//        indexes[indexes.length - 1] = me.match();
 
-        Arrays.sort(indexes);
-
-        long mci = indexes[indexes.length - quorum()];
+//        Arrays.sort(indexes);
+//
+//        long mci = indexes[indexes.length - quorum()];
 
 
         return this.log.commit(this.term, mci);
@@ -524,7 +576,7 @@ public class Raft {
 
         long term = this.log.term(to.next() - 1);
         //TODO 第二个参数要可配置
-        List<Entry> entries = this.log.entries(to.next(), Integer.MAX_VALUE, !to.isObserver());
+        List<Entry> entries = this.log.entries(to.next(), Integer.MAX_VALUE, to.isCore());
 
         boolean empty = entries == null || entries.isEmpty();
 
@@ -566,7 +618,7 @@ public class Raft {
     }
 
     private void recover(Snapshot snapshot, Stashed stashed) throws Exception {
-        if (snapshot != null) this.recover(snapshot.data());
+        if (snapshot != null) this.recover(snapshot);
         //还原hard state
         HardState state = stashed.state();
 
@@ -584,7 +636,7 @@ public class Raft {
                 throw new Exception("error state");
             }
             this.term = state.term();
-            this.voted = this.remotes.get(state.vote());
+            this.voted = this.cluster.get(state.vote());
 
         }
     }
@@ -609,7 +661,39 @@ public class Raft {
 
     }
 
+    private void readjust() {
+        if(this.jointConsensus==null) return;
+
+        List<Integer> prev = this.jointConsensus.prev();
+        List<Integer> next = this.jointConsensus.next();
+
+
+
+        cluster.cores(x->cluster.state(x)== Cluster.State.QUIT&&prev.contains(x.id()))
+                .forEach(x->cluster.remove(x.id()));
+
+        //修改为IN状态
+        cluster.cores(x->cluster.state(x)== Cluster.State.NEW&&next.contains(x.id()))
+                .forEach(x->cluster.update(x, Cluster.State.IN));
+
+        if(next.contains(me.id())){
+            tick.close();
+        }
+
+    }
+
     private void commitEventListener(Entry entry) {
+        if (entry instanceof JointEntry) {
+            JointEntry je = (JointEntry) entry;
+            if (je.stage() == 1) this.jointConsensus = new JointConsensus(je.index(), je.prev(), je.next());
+            else if (je.stage() == 2) {
+                readjust();
+            }
+
+            return;
+
+        }
+
         Value value = new Value(entry);
 
         CompletableFuture<Boolean> future = MESSAGE_FUTURE_MAP.get(value.id());
@@ -620,13 +704,14 @@ public class Raft {
 
     }
 
+
     private int quorum() {
-        return (remotes.cores().size() + 1) / 2 + 1;
+        return (cluster.cores().size()) / 2 + 1;
     }
 
     private boolean checkQuorumActive() {
 
-        long activeCount = remotes.cores().stream().filter(RaftNode::isActive).count() + 1;
+        long activeCount = cluster.cores().stream().filter(RaftNode::isActive).count();
 
         return activeCount >= quorum();
 
@@ -719,7 +804,9 @@ public class Raft {
         logger.info("i am leader:{}", me.id());
 
         //这里把消息传递给其他节点，但不需要传给自己
-        this.broadcast(remotes.cores(), Message.create(MessageType.APP, this.term(), null));
+        this.broadcast(
+                cluster.cores().stream().filter(x -> x != me).collect(Collectors.toList()),
+                Message.create(MessageType.APP, this.term(), null));
     }
 
 
@@ -734,12 +821,20 @@ public class Raft {
         else {
             logger.debug("broadcast heartbeat,current term:{},commitIndex:{}", this.term(), this.log.committedIndex());
             Raft self = this;
-            broadcast(remotes.cores(), node -> {
+            broadcast(
+                    cluster.cores().stream().filter(x -> x != me).collect(Collectors.toList()),
+                    node -> {
 
-                long committed = Math.min(self.log.committedIndex(), node.match());
+                        long committed = Math.min(self.log.committedIndex(), node.match());
 
-                return Message.create(MessageType.HEARTBEAT, this.term, new Heartbeat(committed));
-            });
+                        return Message.create(MessageType.HEARTBEAT, this.term, new Heartbeat(committed));
+                    });
+
+            //判断是否存在新加入的core成员，然后进行集群调整
+
+            if (!cluster.cores(x -> cluster.state(x) != Cluster.State.IN).isEmpty()) {
+                this.send(me, Message.create(MessageType.CLUSTER_CHANGE, this.term()));
+            }
         }
     }
 
@@ -753,14 +848,20 @@ public class Raft {
 
 
     private synchronized void randomFetchEntries() {
-        if (!me.is(RoleType.OBSERVER)) return;
+        if (!me.is(RoleType.LEARNER)) return;
 
-        List<RaftNode> nodes = remotes.cores().stream().filter(RaftNode::isActive).collect(Collectors.toList());
+        List<RaftNode> nodes = cluster.cores().stream().filter(RaftNode::isActive).collect(Collectors.toList());
         if (!nodes.isEmpty()) {
             this.send(nodes.get(RandomUtils.nextInt(0, nodes.size())),
                     Message.create(MessageType.ASK, this.term(), this.log.committedIndex()));
         }
 
+    }
+
+    private synchronized void discard() {
+    }
+
+    private synchronized void discardCommandHandler(final RaftContext context, Message<?> message) {
     }
 
 
@@ -782,10 +883,15 @@ public class Raft {
     }
 
 
-    public HardState stateCreator() {
-        return new HardState(this.term,
+    public StateCollection stateCreator() {
+        HardState hs = new HardState(this.term,
                 this.voted == null ? null : this.voted.id(),
                 this.log == null ? null : this.log.committedIndex());
+
+        ClusterState cs = new ClusterState(cluster.cores(x->cluster.state(x)!= Cluster.State.NEW)
+                .stream().map(Node::id).collect(Collectors.toList()));
+
+        return new StateCollection(hs,cs);
     }
 
 
@@ -821,8 +927,19 @@ public class Raft {
     }
 
 
-    //应用快照
-    protected void recover(byte[] data) {
+    //快照恢复
+    protected void recover(Snapshot snapshot) {
+        List<Integer> coreIds = snapshot.metadata().coreIds();
+
+        //如果发生了节点变化，则把移除的节点变为observer
+//        List<RaftNode> removed = this.remotes.cores().stream().filter(x -> !ArrayUtils.contains(nodeIds, x.id())).collect(Collectors.toList());
+
+//        removed.forEach(RaftNode::becomeLearner);
+
+        if (!coreIds.contains(me.id())) me.becomeLearner();
+
+
+        //todo 状态机改变,子类需执行super.recover(snapshot)
     }
 
     //生成快照

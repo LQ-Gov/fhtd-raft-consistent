@@ -2,6 +2,7 @@ package com.fhtd.raft.transport;
 
 import com.fhtd.raft.message.MarkMessage;
 import com.fhtd.raft.Serializer;
+import com.fhtd.raft.message.NodeControl;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
@@ -22,12 +23,22 @@ public class CommandOutBoundHandler extends ChannelOutboundHandlerAdapter implem
 
             byte[] data = serialize(msg);
 
-            ByteBuf buffer = ctx.alloc().buffer(4+data.length);
+            ByteBuf buffer = ctx.alloc().buffer(1+4+data.length);
 
-            buffer.writeInt(data.length).writeBytes(data);
+            buffer.writeByte(0).writeInt(data.length).writeBytes(data);
 
             msg = buffer;
 
+        }
+
+        else if(msg instanceof NodeControl){
+            byte[] data = serialize(msg);
+
+            ByteBuf buffer = ctx.alloc().buffer(1+4+data.length);
+
+            buffer.writeByte(1).writeInt(data.length).writeBytes(data);
+
+            msg = buffer;
         }
 
 

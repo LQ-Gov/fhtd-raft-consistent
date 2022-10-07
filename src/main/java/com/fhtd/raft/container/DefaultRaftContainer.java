@@ -18,5 +18,10 @@ public class DefaultRaftContainer implements RaftContainer {
         return null;
     }
 
+    @Override
+    public void join(Node node) {
+
+    }
+
 
 }

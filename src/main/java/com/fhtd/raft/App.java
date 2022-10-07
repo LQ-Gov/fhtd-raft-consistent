@@ -17,10 +17,12 @@ public class App {
     public static void main(String[] args) throws Exception {
         //建立raftNode
 
-        Node[] nodes = new Node[3];
+        Node[] nodes = new Node[4];
         nodes[0] = new Node(1, "127.0.0.1", 9930);
         nodes[1] = new Node(2, "127.0.0.1", 9931);
         nodes[2] = new Node(3, "127.0.0.1", 9932);
+
+        nodes[3]= new Node(4,"127.0.0.1",9941,false);
 
 
         int index = args.length>0? Integer.parseInt(args[0]) - 1:0;
@@ -33,6 +35,8 @@ public class App {
         for (int i = 0, ni = 0; i < nodes.length; i++) {
             if (i == index) continue;
 
+            if(!nodes[i].isCore()) continue;
+
             members[ni++] = nodes[i];
 
         }
@@ -42,17 +46,21 @@ public class App {
 
         container.connect(me, members);
 
+
+
         Example example = container.create("example", Example.class);
 
         Thread.sleep(10000);
 
-        if(me.id()==1) example.setValue(10);
+//        if(me.id()==1) example.setValue(10);
+//
+//
+//        while (true){
+//            System.out.println("example value:"+example.getValue());
+//            Thread.sleep(1000);
+//        }
 
 
-        while (true){
-            System.out.println("example value:"+example.getValue());
-            Thread.sleep(1000);
-        }
 
     }
 

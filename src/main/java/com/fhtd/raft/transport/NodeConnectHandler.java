@@ -58,13 +58,21 @@ public class NodeConnectHandler extends ChannelInboundHandlerAdapter implements 
 
             Node node = deserialize(data,Node.class);
 
+            if(communicator.remote(node.id())==null){
+                logger.info("node[{}] not in cluster list,must join the cluster",node.id());
+                ctx.disconnect();
+                return;
+            }
 
-            if (!node.isObserver()&& (node.id() > communicator.local().id())) {
+
+            if (node.isCore()&& (node.id() > communicator.local().id())) {
                 logger.error("error connection!!! local id[{}] is less than remote id[{}],close the connection"
                         , communicator.local().id(), node.id());
                 ctx.disconnect();
                 return;
             }
+
+
 
             Node session = communicator.remote(node.id());
 

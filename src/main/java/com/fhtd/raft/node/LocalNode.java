@@ -22,11 +22,11 @@ public class LocalNode extends RaftNode {
     private Role role;
 
 
-    public LocalNode(Node node, Follower follower, Candidate candidate, PreCandidate preCandidate, Leader leader,Observer observer) {
+    public LocalNode(Node node, Follower follower, Candidate candidate, PreCandidate preCandidate, Leader leader, Learner learner,Discard discard) {
         super(node);
         this.role = new Assister();
 
-        this.ROLE_CACHE = new Role[]{follower, candidate, preCandidate, leader,observer};
+        this.ROLE_CACHE = new Role[]{follower, candidate, preCandidate, leader, learner,discard};
 
         this.active(true);
 
@@ -74,7 +74,9 @@ public class LocalNode extends RaftNode {
         role = ROLE_CACHE[3];
     }
 
-    public void becomeObserver(){role=ROLE_CACHE[4];}
+    public void becomeLearner(){role=ROLE_CACHE[4];}
+
+    public void discard(){role=ROLE_CACHE[5];}
 
     @Override
     public String hostname() {

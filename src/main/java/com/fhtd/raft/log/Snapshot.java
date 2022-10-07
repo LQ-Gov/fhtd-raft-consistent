@@ -1,5 +1,7 @@
 package com.fhtd.raft.log;
 
+import java.util.List;
+
 /**
  * @author liuqi19
  * @version : Snapshot, 2019-04-29 17:46 liuqi19
@@ -31,18 +33,23 @@ public class Snapshot {
 
 
     public static class Metadata {
-        public final static Metadata EMPTY = new Metadata(-1, -1);
+        public final static Metadata EMPTY = new Metadata(-1, -1, null);
 
         private long term;
         private long index;
+        /**
+         * 仅限于core节点*
+         */
+        private List<Integer> coreIds;
 
 
         public Metadata() {
         }
 
-        public Metadata(long term, long index) {
+        public Metadata(long term, long index, List<Integer> coreIds) {
             this.term = term;
             this.index = index;
+            this.coreIds = coreIds;
         }
 
 
@@ -52,6 +59,10 @@ public class Snapshot {
 
         public long index() {
             return index;
+        }
+
+        public List<Integer> coreIds() {
+            return coreIds;
         }
 
 

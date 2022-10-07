@@ -1,6 +1,7 @@
 package com.fhtd.raft.transport;
 
 
+import com.fhtd.raft.message.Transport;
 import com.fhtd.raft.node.Node;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
@@ -16,10 +17,14 @@ public abstract class CommandInBoundHandler<M> extends ChannelInboundHandlerAdap
 
     private CommandReceiveListener<M> listener;
 
+    private byte type;
 
-    public CommandInBoundHandler(Node remote, CommandReceiveListener<M> listener){
+
+    public CommandInBoundHandler(Node remote,Class<M> cls, CommandReceiveListener<M> listener){
         this.remote = remote;
         this.listener = listener;
+        Transport transport = cls.getAnnotation(Transport.class);
+        this.type = transport.type();
     }
 
 
@@ -28,14 +33,21 @@ public abstract class CommandInBoundHandler<M> extends ChannelInboundHandlerAdap
         ByteBuf buffer = (ByteBuf) msg;
 
         if (buffer.isReadable()) {
-            int len = buffer.readInt();//数据长度
+            int type = buffer.getByte(0);
 
-            byte[] data = new byte[len];
+            if(type==this.type) {
+                buffer.skipBytes(1);
 
-            buffer.readBytes(data);
+
+                int len = buffer.readInt();//数据长度
+
+                byte[] data = new byte[len];
+
+                buffer.readBytes(data);
 
 
-            listener.receive(remote,deserialize(data));
+                listener.receive(remote, deserialize(data));
+            }
         }
 
 

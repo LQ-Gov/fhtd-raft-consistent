@@ -3,6 +3,7 @@ package com.fhtd.raft.log;
 
 import com.fhtd.raft.HardState;
 import com.fhtd.raft.Serializer;
+import com.fhtd.raft.StateCollection;
 import com.fhtd.raft.wal.WAL;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.list.UnmodifiableList;
@@ -56,14 +57,14 @@ public class Log implements Serializer, Runnable {
     private final WAL wal;
 
 
-    private final Supplier<HardState> stateCreator;
+    private final Supplier<StateCollection> stateCreator;
 
-    private Consumer<byte[]> recoverEventListener;
+    private Consumer<Snapshot> recoverEventListener;
 
     private Consumer<Entry> commitEventListener;
 
 
-    public Log(Snapshotter snapshotter, WAL wal, Supplier<HardState> stateCreator, Consumer<byte[]> recoverEventListener, Consumer<Entry> commitEventListener) {
+    public Log(Snapshotter snapshotter, WAL wal, Supplier<StateCollection> stateCreator, Consumer<Snapshot> recoverEventListener, Consumer<Entry> commitEventListener) {
 
         this.wal = wal;
         this.snapshotter = snapshotter;
@@ -117,6 +118,11 @@ public class Log implements Serializer, Runnable {
 
     public long committedIndex() {
         return committed;
+    }
+
+    public long append(Entry entry){
+        return this.append(new Entry[]{entry});
+
     }
 
     public long append(Entry[] entries) {
@@ -454,12 +460,12 @@ public class Log implements Serializer, Runnable {
                     }
 
 
-                    HardState state = Log.this.stateCreator.get();
+                    StateCollection sc = Log.this.stateCreator.get();
 
                     //检查是否有未持久化的entries，进行持久化
                     if (CollectionUtils.isNotEmpty(entries)) {
 
-                        this.wal.save(state, entries);
+                        this.wal.save(sc.hardState(), entries);
                         Entry entry = entries.get(entries.size() - 1);
 
                         Log.this.stableTo(entry.term(), entry.index());
@@ -472,13 +478,13 @@ public class Log implements Serializer, Runnable {
                         this.wal.save(snapshot.metadata());
                         this.wal.release(snapshot.metadata().index());
                         Log.this.snapshotTo(snapshot.metadata());
-                        this.recoverEventListener.accept(snapshot.data());
+                        this.recoverEventListener.accept(snapshot);
 //                            this.raft.recover(snapshot.data());
                     }
 
                     //将已经commit的日志应用到状态机
                     if (CollectionUtils.isNotEmpty(committedEntries)) {
-                        this.wal.save(state, null);
+                        this.wal.save(sc.hardState(), null);
 
                         for (Entry entry : committedEntries) {
                             if (entry.data() == null || entry.data().length == 0)
@@ -499,7 +505,7 @@ public class Log implements Serializer, Runnable {
 
                             Entry entry = Log.this.entry(appliedIndex);
 
-                            snapshot = snapshotter.take(new Snapshot.Metadata(entry.term(), entry.index()));
+                            snapshot = snapshotter.take(new Snapshot.Metadata(entry.term(), entry.index(),sc.clusterState().coreIds()));
 
 
                             snapshotter.save(snapshot);

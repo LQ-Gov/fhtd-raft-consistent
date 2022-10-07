@@ -23,6 +23,13 @@ public class Entry {
         this.data = data;
     }
 
+    public Entry(long term,long index,byte[] data){
+        this.term = term;
+        this.index = index;
+        this.data=data;
+
+    }
+
     public long term(){return term;}
 
     public long index(){return index;}

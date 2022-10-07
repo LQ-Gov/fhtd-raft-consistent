@@ -102,18 +102,9 @@ public class MultiRaftContainer implements RaftContainer {
 
         //连接其他节点（连接方式为，只连接大于me.id的节点，以保证多个节点之间只存在一个channel,learn from zookeeper）
         for (Node remote : communicator.remotes()) {
-            if (remote.isObserver() || (!me.isObserver() && remote.id() < me.id())) continue;
+            if (!remote.isCore() || (me.isCore() && remote.id() < me.id())) continue;
 
-            ClientConnection conn = new ClientConnection(remote.hostname(), remote.port());
-
-            conn.connect(new ChannelInitializer<SocketChannel>() {
-                @Override
-                protected void initChannel(SocketChannel ch) throws Exception {
-                    connectionInitializer(remote, conn);
-                }
-            });
-
-            communicator.bind(remote, conn);
+            this.connect0(remote);
         }
 
         ticker.start();
@@ -123,6 +114,20 @@ public class MultiRaftContainer implements RaftContainer {
 
         this.running = true;
 
+
+    }
+
+    private void connect0(Node node){
+        ClientConnection conn = new ClientConnection(node.hostname(), node.port());
+
+        conn.connect(new ChannelInitializer<SocketChannel>() {
+            @Override
+            protected void initChannel(SocketChannel ch) throws Exception {
+                connectionInitializer(node, conn);
+            }
+        });
+
+        communicator.bind(node, conn);
 
     }
 
@@ -147,14 +152,31 @@ public class MultiRaftContainer implements RaftContainer {
 
     }
 
+    @Override
+    public void join(Node node) {
+        Node me = communicator.local();
+        if (!node.isCore() || (me.isCore() && node.id() < me.id())){
+            communicator.join(node);
+            return;
+        }
+
+
+        this.connect0(node);
+
+
+
+    }
+
 
     private void connectionInitializer(Node remote, Connection conn) {
 
         Channel ch = conn.channel();
 
         //消息体大小判断
-        ch.pipeline().addLast(new LengthFieldBasedFrameDecoder(Integer.MAX_VALUE, 0, 4));
+        //消息的结构为，消息类型(1byte),长度(4byte),data(Nbyte)
+        ch.pipeline().addLast(new LengthFieldBasedFrameDecoder(Integer.MAX_VALUE, 1, 4));
         ch.pipeline().addLast(new RemoteConnectHandler(this.communicator.local(), remote,this.communicator));
+        ch.pipeline().addLast(new NodeControlCommandInBoundHandler(remote,this.communicator::nodeControl));
         ch.pipeline().addLast(new MarkCommandInBoundHandler(remote, this.communicator::receive));
         ch.pipeline().addLast(new CommandOutBoundHandler());
     }

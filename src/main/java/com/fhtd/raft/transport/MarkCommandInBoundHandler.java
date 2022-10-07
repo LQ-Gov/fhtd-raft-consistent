@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
 public class MarkCommandInBoundHandler extends CommandInBoundHandler<MarkMessage> implements Deserializer {
     private final static Logger logger = LoggerFactory.getLogger(MarkCommandInBoundHandler.class);
     public MarkCommandInBoundHandler(Node remote, CommandReceiveListener<MarkMessage> listener) {
-        super(remote, listener);
+        super(remote,MarkMessage.class, listener);
     }
 
     @Override

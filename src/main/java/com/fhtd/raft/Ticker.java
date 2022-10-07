@@ -2,10 +2,7 @@ package com.fhtd.raft;
 
 import org.apache.commons.lang3.RandomUtils;
 
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.*;
 
 /**
  * @author liuqi19
@@ -60,7 +57,13 @@ public class Ticker {
         @Override
         public synchronized void run() {
 
-            ticks.forEach(Tick::run);
+            Iterator<Tick> it = ticks.iterator();
+
+            while (it.hasNext()){
+                Tick tick = it.next();
+                if(tick.isClosed) it.remove();
+                else tick.run();
+            }
 
         }
     }
@@ -74,6 +77,8 @@ public class Ticker {
         private volatile long elapsed;
 
         private boolean resting = true;
+
+        private boolean isClosed = false;
 
         private Runnable runnable;
 
@@ -130,6 +135,11 @@ public class Ticker {
 
         public long remain() {
             return (lease + randomizedLease) - elapsed;
+        }
+
+
+        public void close(){
+            this.isClosed=true;
         }
 
     }

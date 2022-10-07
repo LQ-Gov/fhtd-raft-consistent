@@ -1,5 +1,9 @@
 package com.fhtd.raft.node;
 
+import com.fhtd.raft.role.Learner;
+import com.fhtd.raft.role.Role;
+import com.fhtd.raft.role.RoleType;
+
 /**
  * @author liuqi19
  * @version : RaftNode, 2019-05-24 14:30 liuqi19
@@ -15,10 +19,18 @@ public class RaftNode extends Node {
 
     private boolean active = false;
 
+    protected RoleType type;
+
 
     public RaftNode(Node node) {
+        this(node,false);
+
+    }
+
+    public RaftNode(Node node,boolean becomeLearner){
         super(node);
         this.next = match + 1;
+        if(becomeLearner) this.becomeLearner();
     }
 
     public long next() {
@@ -96,6 +108,17 @@ public class RaftNode extends Node {
 
         this.next = this.match + 1;
 
+    }
+
+    public void becomeLearner(){
+        this.type = RoleType.LEARNER;
+    }
+
+    public void becomeFollower(){
+    }
+
+    public boolean is(RoleType type) {
+        return type == this.type;
     }
 
     protected void reset() {

@@ -10,15 +10,12 @@ import java.nio.file.Path;
 public class Example extends Raft {
     private int value;
 
-    public Example(String name, Path dataPath, Communicator communicator, Ticker ticker) {
+    public Example(String name, Path dataPath, Communicator communicator, Ticker ticker) throws Exception {
         super(name, dataPath, communicator, ticker);
     }
 
 
-    @Override
-    protected void recover(byte[] data) {
-        super.recover(data);
-    }
+
 
     @Override
     protected byte[] snapshot() {
